@@ -1,8 +1,8 @@
 services:
-  huajing:
+  luma:
     build: .
-    image: huajing:latest
-    container_name: huajing
+    image: luma:latest
+    container_name: luma
     ports:
       - "8787:8787"
     environment:
@@ -20,8 +20,8 @@ services:
       # PROMPT_OPTIMIZE: "0"
       # 可选：用更强的模型润色图片提示词（需与 LLM baseUrl 兼容）
     volumes:
-      - huajing-data:/app/data
+      - luma-data:/app/data
     restart: unless-stopped
 
 volumes:
-  huajing-data:
+  luma-data:

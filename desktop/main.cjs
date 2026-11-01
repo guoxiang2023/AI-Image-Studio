@@ -1,13 +1,15 @@
 const { app, BrowserWindow, Menu, dialog, session, shell } = require('electron');
 const path = require('node:path');
 
-const APP_NAME = '画境';
-const APP_ID = 'com.huajing.imagegen';
+const APP_NAME = 'Luma';
+const APP_ID = 'com.luma.imagegen';
 let runtime = null;
 let mainWindow = null;
 let quitting = false;
 
 app.setName(APP_NAME);
+// Full rename: use a fresh userData directory. Legacy 画境 data is left untouched.
+app.setPath('userData', path.join(app.getPath('appData'), APP_NAME));
 if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
 
 if (!app.requestSingleInstanceLock()) {
@@ -25,7 +27,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(start).catch((error) => {
-    dialog.showErrorBox('画境启动失败', error?.stack || String(error));
+    dialog.showErrorBox('Luma 启动失败', error?.stack || String(error));
     app.quit();
   });
 }

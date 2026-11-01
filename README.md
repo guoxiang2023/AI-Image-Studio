@@ -1,4 +1,4 @@
-# 画境 · AI Image Studio
+# Luma · AI Image Studio
 
 对话式图片生成智能体。配置自己的对话模型和图片模型后，用自然语言生成、修改和管理图片；同时提供 Web、Docker 和 Electron 桌面端。
 

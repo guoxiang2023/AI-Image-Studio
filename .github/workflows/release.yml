@@ -54,9 +54,9 @@ jobs:
         run: ls -lh release-assets
       - uses: softprops/action-gh-release@v2
         with:
-          name: 画境 v1.0.0
+          name: Luma v1.0.1
           body: |
-            ## 画境 v1.0.0
+            ## Luma v1.0.1
 
             对话式 AI 图片生成桌面应用。首次运行后，在「设置」里填写 LLM 和图片模型的 API 地址、模型名与 Key。
 
@@ -64,17 +64,18 @@ jobs:
 
             | 平台 | 安装包 |
             | --- | --- |
-            | macOS Apple Silicon（M 系列） | `Huajing-1.0.0-mac-arm64.dmg` |
-            | macOS Intel | `Huajing-1.0.0-mac-x64.dmg` |
-            | Windows x64 | `Huajing-1.0.0-win-x64.exe` |
+            | macOS Apple Silicon（M 系列） | `Luma-1.0.1-mac-arm64.dmg` |
+            | macOS Intel | `Luma-1.0.1-mac-x64.dmg` |
+            | Windows x64 | `Luma-1.0.1-win-x64.exe` |
 
             ### 安装说明
 
-            - macOS：打开 DMG，将「画境」拖入 Applications。
+            - macOS：打开 DMG，将「Luma」拖入 Applications。
               当前构建未做 Apple 公证；如首次打开被 Gatekeeper 拦截，请右键应用选择「打开」，或执行：
-              `xattr -dr com.apple.quarantine /Applications/画境.app`
+              `xattr -dr com.apple.quarantine /Applications/Luma.app`
             - Windows：运行 EXE 安装包。当前构建未做代码签名；如出现 SmartScreen 提示，选择「更多信息」→「仍要运行」。
             - 应用不内置任何 API Key，模型费用由使用者自己的 API 账户承担。
+            - 首次使用必须在「模型设置」中自行填写接口地址、模型名称和 Key，不提供默认值。
 
             ### 系统要求
 

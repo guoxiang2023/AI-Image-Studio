@@ -96,7 +96,7 @@ function createImageCard(img, context = {}) {
 
   const download = el('a', 'chip-btn');
   download.href = img.url;
-  download.download = `huajing-${img.id}.${(img.url.split('.').pop() || 'png').split('?')[0]}`;
+  download.download = `luma-${img.id}.${(img.url.split('.').pop() || 'png').split('?')[0]}`;
   download.appendChild(icon('download'));
   download.appendChild(el('span', '', '下载'));
   actions.appendChild(download);

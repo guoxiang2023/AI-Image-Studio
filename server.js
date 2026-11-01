@@ -3,7 +3,7 @@ import { ALLOW_REGISTRATION, REGISTRATION_CODE } from './src/config.js';
 
 async function main() {
   const runtime = await startServer();
-  console.log(`画境 已启动：http://${runtime.host}:${runtime.port}`);
+  console.log(`Luma 已启动：http://${runtime.host}:${runtime.port}`);
   console.log(
     `数据目录：${runtime.dataDir} · 注册：${ALLOW_REGISTRATION ? '开放' : '关闭'}${
       REGISTRATION_CODE ? '（需邀请码）' : ''

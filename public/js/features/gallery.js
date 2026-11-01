@@ -78,7 +78,7 @@ function createGalleryCard(image) {
   const actions = el('div', 'gallery-actions');
   const download = el('a', 'gallery-icon-btn');
   download.href = image.url;
-  download.download = `huajing-${image.id}.${image.url.split('.').pop() || 'png'}`;
+  download.download = `luma-${image.id}.${image.url.split('.').pop() || 'png'}`;
   download.title = '下载';
   download.appendChild(icon('download'));
   actions.appendChild(download);

@@ -34,7 +34,7 @@ import {
 let dataDir;
 
 before(async () => {
-  dataDir = await mkdtemp(path.join(os.tmpdir(), 'huajing-test-'));
+  dataDir = await mkdtemp(path.join(os.tmpdir(), 'luma-test-'));
   initDb(dataDir);
 });
 

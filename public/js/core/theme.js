@@ -1,4 +1,4 @@
-const THEME_KEY = 'huajing-theme';
+const THEME_KEY = 'luma-theme';
 
 export function applyTheme(theme, persist = true) {
   document.documentElement.dataset.theme = theme;

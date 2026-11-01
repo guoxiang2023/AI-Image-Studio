@@ -1,4 +1,4 @@
-# 画境桌面端
+# Luma 桌面端
 
 桌面端用 Electron 承载现有 Node 服务，网页版代码和模型调用逻辑不变。服务只监听 `127.0.0.1` 的随机端口，数据存放在 Electron 的 `userData` 目录，不会写进安装包。
 
@@ -23,10 +23,12 @@ macOS 上也可以交叉构建 Windows 包；若本机 electron-builder 工具�
 
 ## 数据目录
 
-- macOS：`~/Library/Application Support/画境/data`
-- Windows：`%APPDATA%\画境\data`
+- macOS：`~/Library/Application Support/Luma/data`
+- Windows：`%APPDATA%\Luma\data`
 
 会话 Cookie、登录状态和窗口数据保存在 Electron 的 `userData` 目录；删除该目录会重置桌面端本地数据。
+
+彻底改名后，Luma 使用全新的 `userData` 目录；旧的 `~/Library/Application Support/画境` 不会被读取、复制或删除，需要时请手动备份或清理。
 
 ## 分发注意
 

@@ -16,7 +16,7 @@ export const REGISTRATION_CODE = process.env.REGISTRATION_CODE || '';
 export const ALLOW_REGISTRATION = process.env.ALLOW_REGISTRATION !== '0';
 
 export const SESSION_MS = 7 * 24 * 60 * 60 * 1000;
-export const COOKIE_NAME = 'huajing_session';
+export const COOKIE_NAME = 'luma_session';
 
 export const IMAGE_TIMEOUT = Number(process.env.IMAGE_TIMEOUT_SECONDS || 240);
 export const IMAGE_QUALITY = ['low', 'medium', 'high', 'auto'].includes(process.env.IMAGE_QUALITY)

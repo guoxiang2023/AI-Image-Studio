@@ -1,10 +1,10 @@
 {
-  "name": "image-gen-agent",
-  "version": "1.0.0",
+  "name": "luma-image-agent",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
-  "description": "画境 · 对话式图片生成智能体",
-  "author": "Huajing",
+  "description": "Luma · 对话式图片生成智能体",
+  "author": "Luma",
   "license": "UNLICENSED",
   "main": "desktop/main.cjs",
   "scripts": {
@@ -20,9 +20,9 @@
     "electron-builder": "^26.18.0"
   },
   "build": {
-    "appId": "com.huajing.imagegen",
-    "productName": "画境",
-    "artifactName": "Huajing-${version}-${os}-${arch}.${ext}",
+    "appId": "com.luma.imagegen",
+    "productName": "Luma",
+    "artifactName": "Luma-${version}-${os}-${arch}.${ext}",
     "asar": true,
     "npmRebuild": false,
     "directories": {
@@ -73,10 +73,10 @@
       "perMachine": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "画境"
+      "shortcutName": "Luma"
     },
     "dmg": {
-      "title": "画境 ${version}"
+      "title": "Luma ${version}"
     },
     "afterPack": "desktop/after-pack.cjs"
   }
