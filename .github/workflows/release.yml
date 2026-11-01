@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.artifact }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            artifact: macos
+            command: npm run desktop:build:mac
+          - os: windows-latest
+            artifact: windows
+            command: npm run desktop:build:win
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Build installer
+        run: ${{ matrix.command }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/*.dmg
+            dist/*.exe
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Inspect assets
+        run: ls -lh release-assets
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: 画境 v1.0.0
+          body: |
+            ## 画境 v1.0.0
+
+            对话式 AI 图片生成桌面应用。首次运行后，在「设置」里填写 LLM 和图片模型的 API 地址、模型名与 Key。
+
+            ### 下载
+
+            | 平台 | 安装包 |
+            | --- | --- |
+            | macOS Apple Silicon（M 系列） | `Huajing-1.0.0-mac-arm64.dmg` |
+            | macOS Intel | `Huajing-1.0.0-mac-x64.dmg` |
+            | Windows x64 | `Huajing-1.0.0-win-x64.exe` |
+
+            ### 安装说明
+
+            - macOS：打开 DMG，将「画境」拖入 Applications。
+              当前构建未做 Apple 公证；如首次打开被 Gatekeeper 拦截，请右键应用选择「打开」，或执行：
+              `xattr -dr com.apple.quarantine /Applications/画境.app`
+            - Windows：运行 EXE 安装包。当前构建未做代码签名；如出现 SmartScreen 提示，选择「更多信息」→「仍要运行」。
+            - 应用不内置任何 API Key，模型费用由使用者自己的 API 账户承担。
+
+            ### 系统要求
+
+            - macOS 12 或更高版本
+            - Windows 10/11 x64
+          files: |
+            release-assets/*.dmg
+            release-assets/*.exe
+          draft: false
+          prerelease: false
+          make_latest: true
