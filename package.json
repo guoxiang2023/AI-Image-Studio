@@ -1,0 +1,83 @@
+{
+  "name": "image-gen-agent",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "画境 · 对话式图片生成智能体",
+  "author": "Huajing",
+  "license": "UNLICENSED",
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "desktop": "electron .",
+    "desktop:pack": "node desktop/build.cjs --dir --publish never",
+    "desktop:build:mac": "node desktop/build.cjs --mac --x64 --arm64 --publish never",
+    "desktop:build:win": "node desktop/build.cjs --win --x64 --publish never",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "electron": "^45.2.1",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.huajing.imagegen",
+    "productName": "画境",
+    "artifactName": "Huajing-${version}-${os}-${arch}.${ext}",
+    "asar": true,
+    "npmRebuild": false,
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "server.js",
+      "src/**/*",
+      "public/**/*",
+      "desktop/**/*",
+      "package.json"
+    ],
+    "electronDownload": {
+      "mirror": "https://npmmirror.com/mirrors/electron/"
+    },
+    "mac": {
+      "category": "public.app-category.graphics-design",
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "gatekeeperAssess": false
+    },
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "画境"
+    },
+    "dmg": {
+      "title": "画境 ${version}"
+    },
+    "afterPack": "desktop/after-pack.cjs"
+  }
+}
