@@ -346,10 +346,10 @@
           <section>
             <h3>对话模型</h3>
             <p class="section-note">OpenAI 兼容接口，需支持 function calling。</p>
-            <label>接口地址<input id="llmBase" spellcheck="false" placeholder="https://api.deepseek.com/v1" /></label>
+            <label>接口地址<input id="llmBase" spellcheck="false" placeholder="请输入接口地址" /></label>
             <label>模型名称
               <div class="field-row">
-                <input id="llmModel" spellcheck="false" placeholder="deepseek-chat" />
+                <input id="llmModel" spellcheck="false" placeholder="请输入模型名称" />
                 <select id="llmModelSelect" class="model-select" aria-label="选择对话模型" hidden></select>
                 <button type="button" class="mini-btn" id="llmModelFetch">获取列表</button>
               </div>
@@ -362,11 +362,11 @@
           </section>
           <section>
             <h3>图片模型</h3>
-            <p class="section-note">OpenAI Images 兼容接口（generations / edits）。内置网关推荐 gpt-image-2.5-sunburst。</p>
-            <label>接口地址<input id="imageBase" spellcheck="false" placeholder="https://api.openai.com/v1" /></label>
+            <p class="section-note">OpenAI Images 兼容接口（generations / edits）。</p>
+            <label>接口地址<input id="imageBase" spellcheck="false" placeholder="请输入接口地址" /></label>
             <label>模型名称
               <div class="field-row">
-                <input id="imageModel" spellcheck="false" placeholder="gpt-image-2.5-sunburst" />
+                <input id="imageModel" spellcheck="false" placeholder="请输入模型名称" />
                 <select id="imageModelSelect" class="model-select" aria-label="选择图片模型" hidden></select>
                 <button type="button" class="mini-btn" id="imageModelFetch">获取列表</button>
               </div>

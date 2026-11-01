@@ -45,13 +45,13 @@ export const CONTEXT_WINDOW = Math.max(
 
 export const DEFAULT_MODELS = {
   llm: {
-    baseUrl: process.env.DEFAULT_LLM_BASE_URL || 'https://api.deepseek.com/v1',
-    model: process.env.DEFAULT_LLM_MODEL || 'deepseek-chat',
+    baseUrl: '',
+    model: '',
     temperature: 0.7,
   },
   image: {
-    baseUrl: process.env.DEFAULT_IMAGE_BASE_URL || 'http://218.94.54.82:19901/v1',
-    model: process.env.DEFAULT_IMAGE_MODEL || 'gpt-image-2.5-sunburst',
+    baseUrl: '',
+    model: '',
   },
 };
 

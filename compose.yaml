@@ -19,12 +19,6 @@ services:
       # 生成前优化图片提示词（默认开启，设为 0 关闭）
       # PROMPT_OPTIMIZE: "0"
       # 可选：用更强的模型润色图片提示词（需与 LLM baseUrl 兼容）
-      # PROMPT_MODEL: "deepseek-chat"
-      # 新账号的默认模型地址（用户可在页面内改）
-      # DEFAULT_LLM_BASE_URL: "https://api.deepseek.com/v1"
-      # DEFAULT_LLM_MODEL: "deepseek-chat"
-      # DEFAULT_IMAGE_BASE_URL: "http://218.94.54.82:19901/v1"
-      # DEFAULT_IMAGE_MODEL: "gpt-image-2.5-sunburst"
     volumes:
       - huajing-data:/app/data
     restart: unless-stopped
