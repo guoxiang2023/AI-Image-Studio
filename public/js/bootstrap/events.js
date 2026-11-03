@@ -30,6 +30,7 @@ import {
   openSettings,
   saveSettings,
   testConnection,
+  toggleKeyVisibility,
 } from '../features/settings.js';
 import { closeParams, renderParams, resetParams, toggleParams } from '../features/params.js';
 import {
@@ -41,6 +42,11 @@ import {
 } from '../features/templates.js';
 import { clearActiveSkill } from '../features/skills.js';
 import { closeCompare } from '../features/compare.js';
+import {
+  checkForUpdates,
+  closeUpdateModal,
+  openUpdateModal,
+} from '../features/updates.js';
 import {
   closeLightbox,
   closePromptModal,
@@ -80,13 +86,15 @@ export function bindEvents() {
   els.themeBtn.addEventListener('click', toggleTheme);
   els.themeBtnAuth.addEventListener('click', toggleTheme);
   els.closeSettings.addEventListener('click', closeSettings);
-  els.cancelSettings.addEventListener('click', closeSettings);
   els.saveSettings.addEventListener('click', saveSettings);
 
+  els.llmKeyToggle.addEventListener('click', () => toggleKeyVisibility('llm'));
+  els.imageKeyToggle.addEventListener('click', () => toggleKeyVisibility('image'));
   els.llmModelFetch.addEventListener('click', () => fetchModels('llm'));
   els.imageModelFetch.addEventListener('click', () => fetchModels('image'));
   els.llmTest.addEventListener('click', () => testConnection('llm'));
   els.imageTest.addEventListener('click', () => testConnection('image'));
+  els.llmProtocol.addEventListener('change', () => clearModelResult('llm'));
 
   for (const target of ['llm', 'image']) {
     const select = target === 'llm' ? els.llmModelSelect : els.imageModelSelect;
@@ -195,6 +203,16 @@ export function bindEvents() {
     if (event.target === els.promptModal) closePromptModal();
   });
 
+  els.versionBtn.addEventListener('click', openUpdateModal);
+  els.closeUpdate.addEventListener('click', closeUpdateModal);
+  els.cancelUpdate.addEventListener('click', closeUpdateModal);
+  els.recheckUpdate.addEventListener('click', () =>
+    checkForUpdates({ force: true, showModal: true, notify: true }),
+  );
+  els.updateModal.addEventListener('click', (event) => {
+    if (event.target === els.updateModal) closeUpdateModal();
+  });
+
   els.lightbox.addEventListener('click', closeLightbox);
 
   document.addEventListener('click', (event) => {
@@ -203,19 +221,18 @@ export function bindEvents() {
     closeParams();
   });
 
-  els.settingsModal.addEventListener('click', (event) => {
-    if (event.target === els.settingsModal) closeSettings();
-  });
-
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
+    // The settings dialog is dismissed only by its X button. This prevents a
+    // dragged text selection or Escape from discarding unsaved edits.
+    if (!els.settingsModal.hidden) return;
     if (!els.lightbox.hidden) closeLightbox();
-    else if (!els.settingsModal.hidden) closeSettings();
     else if (!els.folderModal.hidden) closeFolderModal();
     else if (!els.templateModal.hidden) closeTemplates();
     else if (!els.tagModal.hidden) closeTagModal();
     else if (!els.promptModal.hidden) closePromptModal();
     else if (!els.compareModal.hidden) closeCompare();
+    else if (!els.updateModal.hidden) closeUpdateModal();
     else if (!els.paramPanel.hidden) closeParams();
     else closeSidebar();
   });

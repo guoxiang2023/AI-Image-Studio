@@ -1,5 +1,7 @@
 import {
   IMAGE_TIMEOUT,
+  LLM_STREAM_IDLE_TIMEOUT,
+  LLM_TIMEOUT,
   PROMPT_OPTIMIZE,
   PROMPT_MODEL,
 } from '../config.js';
@@ -9,7 +11,50 @@ import {
   TOOLS,
 } from './prompts.js';
 import { skillSystemBlock } from '../domain/skill.js';
-import { extractError, isAbort, joinUrl, withTimeout } from '../shared/utils.js';
+import {
+  anthropicToOpenAiResponse,
+  buildAnthropicRequest,
+  isAnthropic,
+  readAnthropicStream,
+} from './anthropic.js';
+import {
+  extractError,
+  isAbort,
+  isRetryableStatus,
+  joinUrl,
+  MAX_ATTEMPTS,
+  networkError,
+  retryDelay,
+  withTimeout,
+} from '../shared/utils.js';
+
+function createIdleTimeout(parentSignal, seconds) {
+  // A long answer is healthy while tokens keep arriving; only abort when the
+  // provider goes silent. This replaces a total stream deadline.
+  const controller = new AbortController();
+  let timer = null;
+  let timedOut = false;
+  const clear = () => {
+    clearTimeout(timer);
+    timer = null;
+  };
+  const touch = () => {
+    clear();
+    timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort(new DOMException('请求超时', 'TimeoutError'));
+    }, Math.max(10, Number(seconds) * 1000));
+  };
+  touch();
+  return {
+    signal: parentSignal ? AbortSignal.any([parentSignal, controller.signal]) : controller.signal,
+    touch,
+    clear,
+    get timedOut() {
+      return timedOut;
+    },
+  };
+}
 
 export async function chatCompletion(
   llm,
@@ -17,64 +62,78 @@ export async function chatCompletion(
   { signal, tools = true, temperature, maxTokens = 2048, model } = {},
 ) {
   if (!llm.apiKey) throw new Error('未配置对话模型 API Key，请打开设置填写');
-  const body = {
-    model: model || llm.model,
-    messages,
-    temperature:
-      typeof temperature === 'number'
-        ? temperature
-        : typeof llm.temperature === 'number'
-          ? llm.temperature
-          : 0.7,
-    max_tokens: maxTokens,
-  };
-  if (tools) {
-    body.tools = TOOLS;
-    body.tool_choice = 'auto';
-  }
-  const url = joinUrl(llm.baseUrl, '/chat/completions');
-  let lastError;
-
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    let res;
-    let text;
-    try {
-      res = await fetch(url, {
-        method: 'POST',
+  const resolvedTemperature =
+    typeof temperature === 'number'
+      ? temperature
+      : typeof llm.temperature === 'number'
+        ? llm.temperature
+        : 0.7;
+  const anthropic = isAnthropic(llm);
+  const request = anthropic
+    ? buildAnthropicRequest(llm, messages, {
+        tools: tools ? TOOLS : false,
+        temperature: resolvedTemperature,
+        maxTokens,
+        model,
+      })
+    : {
+        url: joinUrl(llm.baseUrl, '/chat/completions'),
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${llm.apiKey}`,
         },
-        body: JSON.stringify(body),
-        signal: withTimeout(signal, 120),
+        body: {
+          model: model || llm.model,
+          messages,
+          temperature: resolvedTemperature,
+          max_tokens: maxTokens,
+          ...(tools ? { tools: TOOLS, tool_choice: 'auto' } : {}),
+        },
+      };
+  let lastError;
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+    let res;
+    let text;
+    try {
+      res = await fetch(request.url, {
+        method: 'POST',
+        headers: request.headers,
+        body: JSON.stringify(request.body),
+        signal: withTimeout(signal, LLM_TIMEOUT),
       });
       text = await res.text();
     } catch (err) {
-      const retryable = attempt === 0 && !isAbort(err) && err?.name !== 'TimeoutError';
-      if (!retryable) throw err;
+      if (signal?.aborted) throw err;
       lastError = err;
-      await new Promise((resolve) => setTimeout(resolve, 700));
+      if (attempt + 1 >= MAX_ATTEMPTS) throw networkError(err);
+      await retryDelay(attempt);
       continue;
     }
 
     if (!res.ok) {
       const error = new Error(`对话模型请求失败 (${res.status})：${extractError(text)}`);
-      if (res.status >= 500 && attempt === 0) {
-        lastError = error;
-        await new Promise((resolve) => setTimeout(resolve, 700));
-        continue;
+      if (isRetryableStatus(res.status)) {
+        if (attempt + 1 < MAX_ATTEMPTS) {
+          lastError = error;
+          await retryDelay(attempt);
+          continue;
+        }
+        throw networkError(error);
       }
       throw error;
     }
 
     try {
-      return JSON.parse(text);
-    } catch {
-      throw new Error('对话模型返回了无法解析的内容');
+      const parsed = JSON.parse(text);
+      return anthropic ? anthropicToOpenAiResponse(parsed) : parsed;
+    } catch (err) {
+      if (err instanceof SyntaxError) throw new Error('对话模型返回了无法解析的内容');
+      throw err;
     }
   }
 
-  throw lastError || new Error('对话模型请求失败');
+  throw networkError(lastError);
 }
 
 function deltaText(value) {
@@ -104,13 +163,14 @@ function mergeToolCall(calls, part) {
   }
 }
 
-async function readChatStream(res, onDelta) {
+async function readChatStream(res, onDelta, onActivity) {
   if (!res.body) throw new Error('对话模型没有返回可读取的数据');
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   const content = [];
   const calls = new Map();
   let finishReason = null;
+  let terminal = false;
   let usage = null;
   let buffer = '';
 
@@ -118,7 +178,11 @@ async function readChatStream(res, onDelta) {
     const clean = line.replace(/\r$/, '');
     if (!clean.startsWith('data:')) return;
     const payload = clean.slice(5).trim();
-    if (!payload || payload === '[DONE]') return;
+    if (!payload) return;
+    if (payload === '[DONE]') {
+      terminal = true;
+      return;
+    }
     let data;
     try {
       data = JSON.parse(payload);
@@ -139,22 +203,36 @@ async function readChatStream(res, onDelta) {
     if (Array.isArray(delta.tool_calls)) {
       for (const part of delta.tool_calls) mergeToolCall(calls, part);
     }
-    if (choice.finish_reason) finishReason = choice.finish_reason;
+    if (choice.finish_reason) {
+      finishReason = choice.finish_reason;
+      terminal = true;
+    }
     if (data.usage) usage = data.usage;
   };
 
   while (true) {
     const { value, done } = await reader.read();
+    onActivity?.();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
     let index;
     while ((index = buffer.indexOf('\n')) >= 0) {
       handleLine(buffer.slice(0, index));
       buffer = buffer.slice(index + 1);
+      if (terminal) break;
+    }
+    if (terminal) {
+      await reader.cancel().catch(() => {});
+      break;
     }
   }
   buffer += decoder.decode();
   if (buffer) handleLine(buffer);
+  if (!terminal) {
+    const error = new Error('对话模型连接提前中断');
+    error.retryable = true;
+    throw error;
+  }
 
   const message = { role: 'assistant', content: content.join('') };
   if (calls.size) {
@@ -171,96 +249,175 @@ async function readChatStream(res, onDelta) {
 export async function streamChatCompletion(
   llm,
   messages,
-  { signal, tools = true, temperature, maxTokens = 4096, model, onDelta } = {},
+  {
+    signal,
+    tools = true,
+    temperature,
+    maxTokens = 4096,
+    model,
+    onDelta,
+    onReset,
+    idleTimeout = LLM_STREAM_IDLE_TIMEOUT,
+  } = {},
 ) {
   if (!llm.apiKey) throw new Error('未配置对话模型 API Key，请打开设置填写');
-  const body = {
-    model: model || llm.model,
-    messages,
-    temperature:
-      typeof temperature === 'number'
-        ? temperature
-        : typeof llm.temperature === 'number'
-          ? llm.temperature
-          : 0.7,
-    max_tokens: maxTokens,
-    stream: true,
-  };
-  if (tools) {
-    body.tools = TOOLS;
-    body.tool_choice = 'auto';
-  }
-  const url = joinUrl(llm.baseUrl, '/chat/completions');
-  let lastError;
-
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    let res;
-    try {
-      res = await fetch(url, {
-        method: 'POST',
+  const resolvedTemperature =
+    typeof temperature === 'number'
+      ? temperature
+      : typeof llm.temperature === 'number'
+        ? llm.temperature
+        : 0.7;
+  const anthropic = isAnthropic(llm);
+  const request = anthropic
+    ? buildAnthropicRequest(llm, messages, {
+        tools: tools ? TOOLS : false,
+        temperature: resolvedTemperature,
+        maxTokens,
+        model,
+        stream: true,
+      })
+    : {
+        url: joinUrl(llm.baseUrl, '/chat/completions'),
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${llm.apiKey}`,
         },
-        body: JSON.stringify(body),
-        signal: withTimeout(signal, 120),
+        body: {
+          model: model || llm.model,
+          messages,
+          temperature: resolvedTemperature,
+          max_tokens: maxTokens,
+          stream: true,
+          ...(tools ? { tools: TOOLS, tool_choice: 'auto' } : {}),
+        },
+      };
+  let lastError;
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+    const idle = createIdleTimeout(signal, idleTimeout);
+    let didOutput = false;
+    const emitDelta = (text) => {
+      didOutput = true;
+      onDelta?.(text);
+    };
+    try {
+      const res = await fetch(request.url, {
+        method: 'POST',
+        headers: request.headers,
+        body: JSON.stringify(request.body),
+        signal: idle.signal,
       });
-    } catch (err) {
-      const retryable = attempt === 0 && !isAbort(err) && err?.name !== 'TimeoutError';
-      if (!retryable) throw err;
-      lastError = err;
-      await new Promise((resolve) => setTimeout(resolve, 700));
-      continue;
-    }
+      idle.touch();
 
-    if (!res.ok) {
-      const text = await res.text();
-      const error = new Error(`对话模型请求失败 (${res.status})：${extractError(text)}`);
-      if (res.status >= 500 && attempt === 0) {
-        lastError = error;
-        await new Promise((resolve) => setTimeout(resolve, 700));
-        continue;
+      if (!res.ok) {
+        const text = await res.text();
+        const error = new Error(`对话模型请求失败 (${res.status})：${extractError(text)}`);
+        if (isRetryableStatus(res.status)) {
+          if (attempt + 1 < MAX_ATTEMPTS) {
+            lastError = error;
+            await retryDelay(attempt);
+            continue;
+          }
+          error.retryable = true;
+          throw error;
+        }
+        error.retryable = false;
+        throw error;
       }
-      throw error;
-    }
 
-    const contentType = String(res.headers.get('content-type') || '');
-    if (!contentType.includes('text/event-stream')) {
-      const text = await res.text();
-      try {
-        const parsed = JSON.parse(text);
+      const contentType = String(res.headers.get('content-type') || '');
+      if (!contentType.includes('text/event-stream')) {
+        const text = await res.text();
+        idle.touch();
+        let parsed;
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          const error = new Error('对话模型返回了无法解析的内容');
+          error.retryable = false;
+          throw error;
+        }
+        if (anthropic) {
+          try {
+            parsed = anthropicToOpenAiResponse(parsed);
+          } catch (err) {
+            err.retryable = false;
+            throw err;
+          }
+        }
         const responseText = parsed?.choices?.[0]?.message?.content;
-        if (typeof responseText === 'string' && responseText) onDelta?.(responseText);
+        if (typeof responseText === 'string' && responseText) emitDelta(responseText);
         return parsed;
-      } catch {
-        throw new Error('对话模型返回了无法解析的内容');
       }
-    }
 
-    return await readChatStream(res, onDelta);
+      return anthropic
+        ? await readAnthropicStream(res, emitDelta, idle.touch)
+        : await readChatStream(res, emitDelta, idle.touch);
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      const retryable =
+        err?.retryable !== false &&
+        (idle.timedOut || !isAbort(err) || err?.name === 'TimeoutError');
+      if (!retryable) throw err;
+      if (attempt + 1 >= MAX_ATTEMPTS) throw networkError(err);
+      if (didOutput) onReset?.();
+      lastError = err;
+      await retryDelay(attempt);
+    } finally {
+      idle.clear();
+    }
   }
 
-  throw lastError || new Error('对话模型请求失败');
+  throw networkError(lastError);
 }
 
 export async function requestImage(imageCfg, pathname, init, signal) {
   if (!imageCfg.apiKey) throw new Error('未配置图片模型 API Key，请打开设置填写');
-  const res = await fetch(joinUrl(imageCfg.baseUrl, pathname), {
-    ...init,
-    signal: withTimeout(signal, IMAGE_TIMEOUT),
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`图片模型请求失败 (${res.status})：${extractError(text)}`);
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error('图片模型返回了无法解析的内容');
+  let lastError;
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+    let res;
+    let text;
+    try {
+      res = await fetch(joinUrl(imageCfg.baseUrl, pathname), {
+        ...init,
+        signal: withTimeout(signal, IMAGE_TIMEOUT),
+      });
+      text = await res.text();
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      lastError = err;
+      if (attempt + 1 >= MAX_ATTEMPTS) throw networkError(err);
+      await retryDelay(attempt);
+      continue;
+    }
+
+    if (!res.ok) {
+      const error = new Error(`图片模型请求失败 (${res.status})：${extractError(text)}`);
+      if (isRetryableStatus(res.status)) {
+        if (attempt + 1 < MAX_ATTEMPTS) {
+          lastError = error;
+          await retryDelay(attempt);
+          continue;
+        }
+        throw networkError(error);
+      }
+      throw error;
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new Error('图片模型返回了无法解析的内容');
+    }
+    if (!Array.isArray(parsed.data) || !parsed.data.length) {
+      throw new Error(extractError(text) || '图片模型没有返回图片');
+    }
+    return parsed.data;
   }
-  if (!Array.isArray(parsed.data) || !parsed.data.length) {
-    throw new Error(extractError(text) || '图片模型没有返回图片');
-  }
-  return parsed.data;
+
+  throw networkError(lastError);
 }
 
 export function sanitizeDirectedPrompt(text) {

@@ -6,6 +6,46 @@ function modelField(target) {
     : { select: els.imageModelSelect, input: els.imageModel };
 }
 
+function keyField(target) {
+  return target === 'llm'
+    ? { input: els.llmKey, toggle: els.llmKeyToggle }
+    : { input: els.imageKey, toggle: els.imageKeyToggle };
+}
+
+function setKeyVisibility(target, visible) {
+  const { input, toggle } = keyField(target);
+  input.type = visible ? 'text' : 'password';
+  toggle.setAttribute('aria-pressed', String(visible));
+  toggle.setAttribute('aria-label', visible ? '隐藏 API Key' : '显示 API Key');
+  toggle.title = visible ? '隐藏 API Key' : '显示 API Key';
+  toggle.querySelector('use').setAttribute('href', visible ? '#i-eye' : '#i-eye-off');
+}
+
+function hasSavedKey(target) {
+  return Boolean(state.config?.[target]?.apiKeySet);
+}
+
+export async function toggleKeyVisibility(target) {
+  const { input, toggle } = keyField(target);
+  const show = input.type === 'password';
+  setKeyVisibility(target, show);
+  if (!show || input.value || !hasSavedKey(target)) return;
+
+  toggle.disabled = true;
+  try {
+    const { apiKey } = await api(`/api/config/key?target=${target}`);
+    if (input.type === 'text' && !input.value) {
+      if (!apiKey) throw new Error('未能读取已保存的 API Key');
+      input.value = apiKey;
+    }
+  } catch (error) {
+    setKeyVisibility(target, false);
+    toast(error.message);
+  } finally {
+    toggle.disabled = false;
+  }
+}
+
 function currentModel(target) {
   const { select, input } = modelField(target);
   if (!select.hidden && select.value && select.value !== '__custom__') return select.value;
@@ -35,6 +75,7 @@ function modelDraft(target) {
   const isLlm = target === 'llm';
   return {
     target,
+    ...(isLlm ? { protocol: els.llmProtocol.value } : {}),
     baseUrl: (isLlm ? els.llmBase : els.imageBase).value.trim(),
     model: currentModel(target),
     apiKey: (isLlm ? els.llmKey : els.imageKey).value.trim(),
@@ -47,14 +88,17 @@ export function openSettings() {
   resetModelField('llm');
   resetModelField('image');
   els.llmBase.value = cfg.llm.baseUrl || '';
+  els.llmProtocol.value = cfg.llm.protocol === 'anthropic' ? 'anthropic' : 'openai';
   els.llmModel.value = cfg.llm.model || '';
   els.llmKey.value = '';
+  setKeyVisibility('llm', false);
   els.llmKey.placeholder = cfg.llm.apiKeySet
     ? `已设置 ${cfg.llm.apiKeyHint}，留空保持不变`
     : '请输入 API Key';
   els.imageBase.value = cfg.image.baseUrl || '';
   els.imageModel.value = cfg.image.model || '';
   els.imageKey.value = '';
+  setKeyVisibility('image', false);
   els.imageKey.placeholder = cfg.image.apiKeySet
     ? `已设置 ${cfg.image.apiKeyHint}，留空保持不变`
     : '请输入 API Key';
@@ -63,6 +107,11 @@ export function openSettings() {
 
 export function closeSettings() {
   els.settingsModal.hidden = true;
+  for (const target of ['llm', 'image']) {
+    const { input } = keyField(target);
+    input.value = '';
+    setKeyVisibility(target, false);
+  }
 }
 
 export async function fetchModels(target) {
@@ -151,6 +200,7 @@ export async function testConnection(target) {
 export async function saveSettings() {
   const payload = {
     llm: {
+      protocol: els.llmProtocol.value,
       baseUrl: els.llmBase.value.trim(),
       model: currentModel('llm'),
     },

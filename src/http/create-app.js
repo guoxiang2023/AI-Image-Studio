@@ -13,7 +13,7 @@ import {
   handleRegister,
 } from './routes/auth.js';
 import { handleChat } from './routes/chat.js';
-import { handleConfig, handleModels, handleTest } from './routes/config.js';
+import { handleConfig, handleModels, handleRevealKey, handleTest } from './routes/config.js';
 import {
   handleCreateFolder,
   handleDeleteFolder,
@@ -29,12 +29,14 @@ import {
   handleListSkills,
 } from './routes/skills.js';
 import { handleUpload } from './routes/upload.js';
+import { handleVersion } from './routes/version.js';
 import { serveImageFile, serveStatic } from './static.js';
 
 function buildRouter() {
   const router = createRouter();
 
   router.get('/api/health', ({ res }) => json(res, 200, { ok: true }), { public: true });
+  router.get('/api/version', ({ req, res, url }) => handleVersion(req, res, url), { public: true });
   router.get('/api/auth/status', ({ req, res }) => handleAuthStatus(req, res), { public: true });
   router.post('/api/auth/register', ({ req, res }) => handleRegister(req, res), { public: true });
   router.post('/api/auth/login', ({ req, res }) => handleLogin(req, res), { public: true });
@@ -42,6 +44,7 @@ function buildRouter() {
 
   router.get('/api/auth/me', ({ res, user }) => handleMe(res, user));
   router.get('/api/config', ({ req, res, user }) => handleConfig(req, res, user));
+  router.get('/api/config/key', ({ req, res, user }) => handleRevealKey(req, res, user));
   router.put('/api/config', ({ req, res, user }) => handleConfig(req, res, user));
   router.post('/api/models', ({ req, res, user }) => handleModels(req, res, user));
   router.post('/api/test', ({ req, res, user }) => handleTest(req, res, user));

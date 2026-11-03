@@ -44,7 +44,9 @@ export function chatToClient(chat) {
     summary: chat.summary || '',
     summaryUpto: chat.summaryUpto || 0,
     skillId: chat.skillId || null,
-    messages: chat.messages,
+    messages: chat.messages.filter(
+      (message) => !(message.draft && !message.content && !(message.images?.length)),
+    ),
   };
 }
 

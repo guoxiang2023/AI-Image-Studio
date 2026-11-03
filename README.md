@@ -5,9 +5,12 @@
 ## 功能
 
 - 自然对话、流式回复与 Markdown 渲染
+- 流式回复中断或刷新页面后保留已生成的部分内容
 - 多轮图片生成与基于参考图的修改
 - 提示词自动优化、会话摘要、上下文压缩
-- 每个账号独立配置 LLM / 图片模型
+- 版本检查更新、发布说明与安装包下载入口
+- 每个账号独立配置 LLM / 图片模型；对话模型支持 OpenAI 兼容与 Anthropic Messages 接口
+- 模型 API Key 支持显示 / 隐藏
 - 图片画册、文件夹、标签、收藏、对比
 - Skill 导入：把风格、约束和默认参数封装成可复用配置
 - Web / Docker / macOS / Windows 桌面端
@@ -18,11 +21,25 @@
 
 ```bash
 npm install
-npm start
+
+# 后台启动 Web（默认）
+./start-web.sh start
+
+# 查看状态 / 停止 / 重启
+./start-web.sh status
+./start-web.sh stop
+./start-web.sh restart
+
+# 查看日志
+./start-web.sh logs 100
+./start-web.sh logs -f
+
+# 前台运行，Ctrl+C 停止
+./start-web.sh run
 # http://127.0.0.1:8787
 ```
 
-首次启动后注册账号，在「模型设置」中填写 LLM 和图片模型的 Base URL、模型名和 API Key。
+后台运行的 PID、日志在 `.run/`。首次启动后注册账号，在「模型设置」中填写 LLM 和图片模型的 Base URL、模型名和 API Key。对话模型可选择 OpenAI 兼容或 Anthropic Messages 格式；Anthropic 接口地址可填写服务根地址（程序自动补 `/v1`），也可以直接填到 `/v1`，例如 `https://api.anthropic.com` 或 `https://api.anthropic.com/v1`。图片模型仍使用 OpenAI Images 兼容接口。
 
 ### Docker
 
@@ -85,5 +102,11 @@ npm test
 | `COOKIE_SECURE` | `0` | HTTPS 下设为 `1` |
 | `TRUST_PROXY` | `0` | 反向代理后设为 `1` |
 | `PROMPT_OPTIMIZE` | `1` | 是否优化图片提示词 |
+| `LLM_TIMEOUT_SECONDS` | `300` | 非流式对话请求总超时 |
+| `LLM_STREAM_IDLE_TIMEOUT_SECONDS` | `120` | 流式回复无数据时的空闲超时，收到新内容会重置 |
+| `UPDATE_REPO` | `guoxiang2023/AI-Image-Studio` | GitHub 仓库（`owner/repo`），用于检查 Release |
+| `UPDATE_TIMEOUT_SECONDS` | `8` | 检查更新请求超时 |
+| `UPDATE_CACHE_SECONDS` | `600` | 更新检查缓存时间 |
+| `GITHUB_TOKEN` | 空 | 可选；GitHub API 限流时提高额度 |
 
 完整配置见 `src/config.js` 和 `compose.yaml`。

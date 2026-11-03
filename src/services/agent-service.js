@@ -2,7 +2,7 @@ import { SYSTEM_PROMPT } from '../ai/prompts.js';
 import { streamChatCompletion } from '../ai/llm.js';
 import { runTool } from './tools-service.js';
 import { toLlmHistory } from '../domain/chat.js';
-import { parseArgs } from '../shared/utils.js';
+import { friendlyError, parseArgs } from '../shared/utils.js';
 import { skillSystemBlock } from '../domain/skill.js';
 
 export async function runAgent(ctx) {
@@ -29,16 +29,29 @@ export async function runAgent(ctx) {
   for (let step = 0; step < maxSteps; step += 1) {
     ctx.emit({ type: 'status', text: step === 0 ? '理解需求…' : '整理结果…' });
     let streamed = '';
-    const response = await streamChatCompletion(ctx.models.llm, messages, {
-      signal: ctx.signal,
-      // The last round must answer in text instead of asking for another tool.
-      tools: step < maxSteps - 1,
-      maxTokens: 4096,
-      onDelta: (delta) => {
-        streamed += delta;
-        ctx.emit({ type: 'delta', text: delta });
-      },
-    });
+    let response;
+    try {
+      response = await streamChatCompletion(ctx.models.llm, messages, {
+        signal: ctx.signal,
+        // The last round must answer in text instead of asking for another tool.
+        tools: step < maxSteps - 1,
+        maxTokens: 4096,
+        onDelta: (delta) => {
+          streamed += delta;
+          ctx.emit({ type: 'delta', text: delta });
+        },
+        onReset: () => {
+          streamed = '';
+          ctx.emit({ type: 'reset' });
+        },
+      });
+    } catch (err) {
+      if (ctx.signal?.aborted || !streamed.trim()) throw err;
+      // All retries failed after a partial answer arrived. Keep what the user
+      // already saw instead of replacing the whole turn with an error.
+      text = `${streamed.trim()}\n\n（${friendlyError(err)}，以上内容未完整生成）`;
+      break;
+    }
     const message = response?.choices?.[0]?.message;
     if (!message) throw new Error('对话模型返回为空');
 

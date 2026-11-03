@@ -2,7 +2,13 @@ import { mkdir, open, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { MIME, RATIO_SIZE, USERS_DIR, VALID_SIZES } from '../config.js';
 import { inferAspectRatio, padPngToRatio, pngSize } from './png.js';
-import { newId } from '../shared/utils.js';
+import {
+  MAX_ATTEMPTS,
+  isRetryableStatus,
+  networkError,
+  newId,
+  retryDelay,
+} from '../shared/utils.js';
 
 export function userImageDir(userId) {
   return path.join(USERS_DIR, userId, 'images');
@@ -35,9 +41,42 @@ export async function findImageFile(userId, id) {
 export async function itemToBuffer(item, signal) {
   if (item?.b64_json) return Buffer.from(item.b64_json, 'base64');
   if (item?.url) {
-    const res = await fetch(item.url, { signal });
-    if (!res.ok) throw new Error(`下载生成图片失败 (${res.status})`);
-    return Buffer.from(await res.arrayBuffer());
+    let lastError;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      let res;
+      try {
+        res = await fetch(item.url, { signal });
+      } catch (err) {
+        if (signal?.aborted) throw err;
+        lastError = err;
+        if (attempt + 1 >= MAX_ATTEMPTS) throw networkError(err);
+        await retryDelay(attempt);
+        continue;
+      }
+
+      if (!res.ok) {
+        const error = new Error(`下载生成图片失败 (${res.status})`);
+        if (isRetryableStatus(res.status)) {
+          if (attempt + 1 < MAX_ATTEMPTS) {
+            lastError = error;
+            await retryDelay(attempt);
+            continue;
+          }
+          throw networkError(error);
+        }
+        throw error;
+      }
+
+      try {
+        return Buffer.from(await res.arrayBuffer());
+      } catch (err) {
+        if (signal?.aborted) throw err;
+        lastError = err;
+        if (attempt + 1 >= MAX_ATTEMPTS) throw networkError(err);
+        await retryDelay(attempt);
+      }
+    }
+    throw networkError(lastError);
   }
   throw new Error('图片模型没有返回图片数据');
 }

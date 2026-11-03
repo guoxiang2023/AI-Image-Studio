@@ -6,7 +6,8 @@ import {
   SUMMARY_MAX_CALLS,
   SUMMARY_TRIGGER,
 } from '../config.js';
-import { extractError, isAbort, joinUrl, withTimeout } from '../shared/utils.js';
+import { chatCompletion } from '../ai/llm.js';
+import { isAbort, withTimeout } from '../shared/utils.js';
 
 const summaryAttempts = new Map();
 
@@ -45,29 +46,16 @@ async function summarizeConversation(llm, previous, transcript, signal) {
     `\n\n新增对话：\n${transcript}`,
   ].join('');
 
-  const res = await fetch(joinUrl(llm.baseUrl, '/chat/completions'), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${llm.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: llm.model,
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: 1024,
+  const parsed = await chatCompletion(
+    llm,
+    [{ role: 'user', content: prompt }],
+    {
+      tools: false,
+      maxTokens: 1024,
       temperature: 0.2,
-      stream: false,
-    }),
-    signal: withTimeout(signal, 60),
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`摘要请求失败 (${res.status})：${extractError(text)}`);
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error('摘要接口返回的不是 JSON');
-  }
+      signal: withTimeout(signal, 60),
+    },
+  );
   return String(parsed?.choices?.[0]?.message?.content || '').trim().slice(0, 1200);
 }
 

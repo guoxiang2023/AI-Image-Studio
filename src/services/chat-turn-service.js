@@ -90,10 +90,57 @@ export async function runPreparedTurn({ user, prepared, emit, signal }) {
   chat.messages.push(userMessage);
 
   const turnImages = [];
-  let assistantRecorded = false;
+  let draft = null;
+  let lastDraftSave = 0;
+
+  const removeDraft = () => {
+    if (!draft) return;
+    const index = chat.messages.indexOf(draft);
+    if (index >= 0) chat.messages.splice(index, 1);
+    draft = null;
+  };
+
+  const saveDraft = (force = false) => {
+    if (!draft) return;
+    const ts = now();
+    if (!force && ts - lastDraftSave < 600) return;
+    lastDraftSave = ts;
+    try {
+      saveChat(chat);
+    } catch {
+      /* keep the stream alive; the final save is authoritative */
+    }
+  };
+
+  const handleEvent = (event) => {
+    if (draft) {
+      if (event.type === 'delta') {
+        draft.content += event.text;
+        saveDraft();
+      } else if (event.type === 'reset') {
+        draft.content = '';
+        saveDraft(true);
+      } else if (event.type === 'image') {
+        const image = { ...event };
+        delete image.type;
+        if (!draft.images.some((item) => item.id === image.id)) {
+          draft.images.push(image);
+        }
+        saveDraft(true);
+      }
+    }
+    emit(event);
+  };
+
   try {
     saveChat(chat);
     await maybeCompressChat(chat, models.llm, signal, emit, { saveSummary: updateSummary });
+
+    // Keep a draft in the chat document while tokens stream. A refresh then
+    // reloads what the user has already seen instead of an empty turn.
+    draft = { role: 'assistant', content: '', images: [], ts: now(), draft: true };
+    chat.messages.push(draft);
+
     const { text } = await runAgent({
       user,
       chat,
@@ -105,30 +152,33 @@ export async function runPreparedTurn({ user, prepared, emit, signal }) {
       turnId,
       countBudget: options.count || null,
       userText: message,
-      emit,
+      emit: handleEvent,
       signal,
       turnImages,
     });
-    if (text) emit({ type: 'text', text });
-    chat.messages.push({
-      role: 'assistant',
-      content: text,
-      images: turnImages,
-      ts: now(),
-    });
-    assistantRecorded = true;
-    if (turnImages.length) chat.lastImageId = turnImages[turnImages.length - 1].id;
+
+    draft.content = text;
+    draft.images = turnImages;
+    delete draft.draft;
+    if (!draft.content && !draft.images.length) {
+      removeDraft();
+    } else if (turnImages.length) {
+      chat.lastImageId = turnImages[turnImages.length - 1].id;
+    }
     saveChat(chat);
+    if (text) emit({ type: 'text', text });
     emit({ type: 'done', sessionId: chat.id, created: isNew });
   } catch (err) {
-    if (!assistantRecorded && turnImages.length) {
-      chat.messages.push({
-        role: 'assistant',
-        content: '',
-        images: turnImages,
-        ts: now(),
-      });
-      chat.lastImageId = turnImages[turnImages.length - 1].id;
+    if (draft) {
+      draft.images = turnImages;
+      if (draft.content.trim() || draft.images.length) {
+        delete draft.draft;
+        if (draft.images.length) {
+          chat.lastImageId = draft.images[draft.images.length - 1].id;
+        }
+      } else {
+        removeDraft();
+      }
     }
     if (!signal.aborted) {
       emit({ type: 'error', message: friendlyError(err) });

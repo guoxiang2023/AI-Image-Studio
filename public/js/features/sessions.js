@@ -40,7 +40,7 @@ export function renderSessionList() {
       img.alt = '';
       item.appendChild(img);
     } else {
-      const thumb = el('div', 'session-thumb empty');
+      const thumb = el('div', 'session-thumb is-empty');
       thumb.appendChild(icon('spark'));
       item.appendChild(thumb);
     }

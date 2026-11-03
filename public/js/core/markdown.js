@@ -24,6 +24,79 @@ function inline(text) {
   return value;
 }
 
+function splitTableRow(line) {
+  let value = String(line || '').trim();
+  if (value.startsWith('|')) value = value.slice(1);
+  if (value.endsWith('|') && !value.endsWith('\\|')) value = value.slice(0, -1);
+
+  const cells = [];
+  let current = '';
+  let inCode = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (char === '\\' && value[index + 1] === '|') {
+      current += '|';
+      index += 1;
+      continue;
+    }
+    if (char === '`') inCode = !inCode;
+    if (char === '|' && !inCode) {
+      cells.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  cells.push(current.trim());
+  return cells;
+}
+
+function tableAlignments(line) {
+  if (!String(line || '').includes('|')) return null;
+  return splitTableRow(line).map((cell) => {
+    if (!/^:?-{3,}:?$/.test(cell)) return null;
+    if (cell.startsWith(':') && cell.endsWith(':')) return 'center';
+    if (cell.endsWith(':')) return 'right';
+    return 'left';
+  });
+}
+
+function parseTable(lines, index) {
+  const header = splitTableRow(lines[index]);
+  if (header.length < 2) return null;
+  const aligns = tableAlignments(lines[index + 1]);
+  if (!aligns || aligns.some((align) => !align) || aligns.length !== header.length) return null;
+
+  const rows = [];
+  let cursor = index + 2;
+  while (cursor < lines.length) {
+    const row = lines[cursor];
+    if (!row.trim() || !row.includes('|')) break;
+    const cells = splitTableRow(row);
+    if (cells.length !== header.length) break;
+    rows.push(cells);
+    cursor += 1;
+  }
+  return { header, aligns, rows, end: cursor };
+}
+
+function renderTable(table) {
+  const cell = (tag, text, align) =>
+    `<${tag} class="align-${align}">${inline(text)}</${tag}>`;
+  const head = table.header
+    .map((text, index) => cell('th', text, table.aligns[index]))
+    .join('');
+  const body = table.rows
+    .map(
+      (row) =>
+        `<tr>${row
+          .map((text, index) => cell('td', text, table.aligns[index]))
+          .join('')}</tr>`,
+    )
+    .join('');
+  return `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
 /**
  * Convert the small Markdown subset used by chat answers into safe HTML.
  * Raw model text is escaped first; only the tags created here can reach the DOM.
@@ -58,7 +131,8 @@ export function markdownToHtml(markdown) {
     flushQuote();
   };
 
-  for (const line of lines) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     if (code) {
       if (/^\s*```/.test(line)) {
         out.push(`<pre><code>${escapeHtml(code.join('\n'))}</code></pre>`);
@@ -107,6 +181,14 @@ export function markdownToHtml(markdown) {
         list = { type, items: [] };
       }
       list.items.push((bullet || ordered)[1]);
+      continue;
+    }
+
+    const table = parseTable(lines, index);
+    if (table) {
+      flush();
+      out.push(renderTable(table));
+      index = table.end - 1;
       continue;
     }
 

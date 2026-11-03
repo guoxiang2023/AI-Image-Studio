@@ -1,7 +1,64 @@
 import { IMAGE_QUALITY } from '../config.js';
 import { requestImage } from '../ai/llm.js';
+import {
+  anthropicEndpoint,
+  anthropicHeaders,
+  anthropicToOpenAiResponse,
+  buildAnthropicRequest,
+} from '../ai/anthropic.js';
 import { draftSettings } from './model-settings-service.js';
 import { extractError, friendlyError, joinUrl, withTimeout } from '../shared/utils.js';
+
+function modelListUrls(cfg) {
+  if (cfg.protocol === 'anthropic') return [anthropicEndpoint(cfg.baseUrl, '/models')];
+
+  const urls = [joinUrl(cfg.baseUrl, '/models')];
+  try {
+    const base = new URL(cfg.baseUrl);
+    const path = base.pathname.replace(/\/+$/, '');
+    // Bifrost exposes its model catalog at /openai/models while the standard
+    // OpenAI-compatible /v1/models path is not routed by the reverse proxy.
+    if (/\/v1$/i.test(path)) {
+      const rootPath = path.slice(0, -3);
+      if (!/\/openai$/i.test(rootPath)) {
+        urls.push(`${base.origin}${rootPath}/openai/models`);
+      }
+    }
+  } catch {
+    /* draftSettings already validated the URL */
+  }
+  return [...new Set(urls)];
+}
+
+function modelsFromPayload(parsed) {
+  const raw = Array.isArray(parsed?.data)
+    ? parsed.data
+    : Array.isArray(parsed?.models)
+      ? parsed.models
+      : Array.isArray(parsed)
+        ? parsed
+        : [];
+  return [
+    ...new Set(
+      raw
+        .map((item) => (typeof item === 'string' ? item : item?.id || item?.name || ''))
+        .filter((name) => typeof name === 'string' && name.trim())
+        .map((name) => name.trim()),
+    ),
+  ].sort((a, b) => a.localeCompare(b));
+}
+
+function listModelsError(response, text) {
+  let hint;
+  if (response.status === 401 || response.status === 403) {
+    hint = '该接口不支持模型列表或 Key 无权限，可直接手动填写模型名';
+  } else if (response.status === 404) {
+    hint = '该接口没有 /models 端点，可直接手动填写模型名';
+  } else {
+    hint = extractError(text);
+  }
+  return `获取失败 (${response.status})：${hint}`;
+}
 
 export async function listModels({ userId, body }) {
   const target = body.target === 'image' ? 'image' : 'llm';
@@ -10,59 +67,53 @@ export async function listModels({ userId, body }) {
   if (!cfg.apiKey) return { ok: false, error: '请先填写 API Key' };
 
   const started = Date.now();
-  let response;
-  let text;
-  try {
-    response = await fetch(joinUrl(cfg.baseUrl, '/models'), {
-      headers: { Authorization: `Bearer ${cfg.apiKey}` },
-      signal: withTimeout(undefined, 20),
-    });
-    text = await response.text();
-  } catch (err) {
-    return { ok: false, error: friendlyError(err) };
-  }
+  let lastError = '获取失败';
 
-  if (!response.ok) {
-    let hint;
-    if (response.status === 401 || response.status === 403) {
-      hint = '该接口不支持模型列表或 Key 无权限，可直接手动填写模型名';
-    } else if (response.status === 404) {
-      hint = '该接口没有 /models 端点，可直接手动填写模型名';
-    } else {
-      hint = extractError(text);
+  for (const url of modelListUrls(cfg)) {
+    let response;
+    let text;
+    try {
+      response = await fetch(url, {
+        headers:
+          cfg.protocol === 'anthropic'
+            ? anthropicHeaders(cfg.apiKey)
+            : { Authorization: `Bearer ${cfg.apiKey}` },
+        signal: withTimeout(undefined, 20),
+      });
+      text = await response.text();
+    } catch (err) {
+      lastError = friendlyError(err);
+      continue;
     }
-    return { ok: false, error: `获取失败 (${response.status})：${hint}` };
+
+    if (!response.ok) {
+      lastError = listModelsError(response, text);
+      if (response.status === 401 || response.status === 400 || response.status >= 500) break;
+      continue;
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      lastError = '接口返回的不是 JSON';
+      continue;
+    }
+
+    const models = modelsFromPayload(parsed);
+    if (!models.length) {
+      lastError = '接口未返回模型列表';
+      continue;
+    }
+
+    return {
+      ok: true,
+      models: models.slice(0, 200),
+      latencyMs: Date.now() - started,
+    };
   }
 
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return { ok: false, error: '接口返回的不是 JSON' };
-  }
-
-  const raw = Array.isArray(parsed?.data)
-    ? parsed.data
-    : Array.isArray(parsed?.models)
-      ? parsed.models
-      : Array.isArray(parsed)
-        ? parsed
-        : [];
-  const models = [
-    ...new Set(
-      raw
-        .map((item) => (typeof item === 'string' ? item : item?.id || item?.name || ''))
-        .filter((name) => typeof name === 'string' && name.trim())
-        .map((name) => name.trim()),
-    ),
-  ].sort((a, b) => a.localeCompare(b));
-
-  if (!models.length) return { ok: false, error: '接口未返回模型列表' };
-  return {
-    ok: true,
-    models: models.slice(0, 200),
-    latencyMs: Date.now() - started,
-  };
+  return { ok: false, error: lastError };
 }
 
 export async function testModel({ userId, body }) {
@@ -74,11 +125,21 @@ export async function testModel({ userId, body }) {
   const started = Date.now();
 
   if (target === 'llm') {
-    let response;
-    let text;
-    try {
-      response = await fetch(joinUrl(cfg.baseUrl, '/chat/completions'), {
-        method: 'POST',
+    let request;
+    if (cfg.protocol === 'anthropic') {
+      const built = buildAnthropicRequest(
+        cfg,
+        [{ role: 'user', content: '请只回复：OK' }],
+        { tools: false, maxTokens: 16, temperature: 0 },
+      );
+      request = {
+        url: built.url,
+        headers: built.headers,
+        body: JSON.stringify(built.body),
+      };
+    } else {
+      request = {
+        url: joinUrl(cfg.baseUrl, '/chat/completions'),
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${cfg.apiKey}`,
@@ -90,6 +151,16 @@ export async function testModel({ userId, body }) {
           temperature: 0,
           stream: false,
         }),
+      };
+    }
+
+    let response;
+    let text;
+    try {
+      response = await fetch(request.url, {
+        method: 'POST',
+        headers: request.headers,
+        body: request.body,
         signal: withTimeout(undefined, 20),
       });
       text = await response.text();
@@ -110,6 +181,13 @@ export async function testModel({ userId, body }) {
       parsed = JSON.parse(text);
     } catch {
       return { ok: false, error: '接口返回的不是 JSON' };
+    }
+    if (cfg.protocol === 'anthropic') {
+      try {
+        parsed = anthropicToOpenAiResponse(parsed);
+      } catch (err) {
+        return { ok: false, error: friendlyError(err) };
+      }
     }
     if (!Array.isArray(parsed?.choices) || !parsed.choices.length) {
       return { ok: false, error: extractError(text) || '模型未返回有效响应' };

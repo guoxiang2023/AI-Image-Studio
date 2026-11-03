@@ -188,6 +188,12 @@ function createUserMessage(message) {
   }
   body.appendChild(bubble);
   wrap.appendChild(body);
+
+  const avatar = el('div', 'user-avatar');
+  avatar.textContent = Array.from(state.user?.username || '?')[0]?.toUpperCase() || '?';
+  avatar.title = state.user?.username || '用户';
+  avatar.setAttribute('aria-hidden', 'true');
+  wrap.appendChild(avatar);
   return wrap;
 }
 
@@ -201,11 +207,6 @@ function createAssistantMessage(message) {
   const wrap = el('div', 'msg assistant');
   wrap.appendChild(assistantAvatar());
   const body = el('div', 'body');
-  if (message.content) {
-    const content = el('div', 'msg-content');
-    renderMarkdown(content, message.content);
-    body.appendChild(content);
-  }
   if (message.images?.length) {
     const grid = el('div', 'image-grid');
     const images = message.images;
@@ -215,6 +216,11 @@ function createAssistantMessage(message) {
       grid.appendChild(createImageCard(img, { getGroupImages }));
     }
     body.appendChild(grid);
+  }
+  if (message.content) {
+    const content = el('div', 'msg-content');
+    renderMarkdown(content, message.content);
+    body.appendChild(content);
   }
   wrap.appendChild(body);
   return wrap;
@@ -290,9 +296,9 @@ export function createAssistantShell() {
     frame = 0;
   };
 
+  body.appendChild(grid);
   body.appendChild(status);
   body.appendChild(content);
-  body.appendChild(grid);
   wrap.appendChild(body);
   els.messages.appendChild(wrap);
   scrollBottom();

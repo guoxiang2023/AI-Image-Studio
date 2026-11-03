@@ -582,13 +582,13 @@ html[data-theme="light"] .ico-moon {
   gap: 9px;
   width: 100%;
   padding: 11px 14px;
-  border: 1px solid var(--border-strong);
+  border: 1px solid transparent;
   border-radius: 12px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--fg) 6%, transparent), transparent);
+  background: transparent;
   color: var(--fg);
   font-size: 13.5px;
   font-weight: 600;
-  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+  transition: border-color 0.15s, background 0.15s;
 }
 
 .new-chat .ico {
@@ -598,9 +598,8 @@ html[data-theme="light"] .ico-moon {
 }
 
 .new-chat:hover {
-  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
-  background: var(--accent-soft);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  border-color: var(--border);
+  background: var(--bubble);
 }
 
 .new-chat:active {
@@ -706,13 +705,13 @@ html[data-theme="light"] .ico-moon {
   object-fit: cover;
 }
 
-.session-thumb.empty {
+.session-thumb.is-empty {
   display: grid;
   place-items: center;
   color: var(--faint);
 }
 
-.session-thumb.empty .ico {
+.session-thumb.is-empty .ico {
   width: 14px;
   height: 14px;
 }
@@ -771,6 +770,42 @@ html[data-theme="light"] .ico-moon {
 .sidebar-foot {
   border-top: 1px solid var(--border);
   padding-top: 12px;
+}
+
+.version-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  padding: 4px 7px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+
+.version-badge:hover {
+  color: var(--muted);
+  background: var(--bubble);
+  border-color: var(--border);
+}
+
+.version-badge.has-update {
+  color: var(--accent);
+}
+
+.update-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
 }
 
 .user-row {
@@ -1032,6 +1067,15 @@ html[data-theme="light"] .ico-moon {
   box-shadow: 0 8px 24px rgba(124, 108, 255, 0.3);
 }
 
+.msg.user .user-avatar {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  margin-top: 2px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
 .msg.assistant .avatar .ico {
   width: 15px;
   height: 15px;
@@ -1153,6 +1197,61 @@ html[data-theme="light"] .ico-moon {
   color: var(--muted);
 }
 
+.msg-content .table-wrap {
+  max-width: 100%;
+  margin: 0.7em 0 1em;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-3);
+  -webkit-overflow-scrolling: touch;
+}
+
+.msg-content table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92em;
+  line-height: 1.55;
+}
+
+.msg-content th,
+.msg-content td {
+  min-width: 7em;
+  padding: 8px 11px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.msg-content th {
+  background: var(--bubble);
+  color: var(--fg);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.msg-content tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.msg-content th:last-child,
+.msg-content td:last-child {
+  border-right: 0;
+}
+
+.msg-content tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--fg) 3%, transparent);
+}
+
+.msg-content .align-center {
+  text-align: center;
+}
+
+.msg-content .align-right {
+  text-align: right;
+}
+
 .msg-content a {
   color: var(--accent);
   text-decoration: underline;
@@ -1269,6 +1368,10 @@ html[data-theme="light"] .ico-moon {
   flex-wrap: wrap;
   gap: 14px;
   align-items: flex-start;
+}
+
+.image-grid:empty {
+  display: none;
 }
 
 .image-card {
@@ -2127,6 +2230,34 @@ html[data-theme="light"] .ico-moon {
   gap: 8px;
 }
 
+.secret-field {
+  position: relative;
+  display: flex;
+}
+
+.secret-field > input {
+  flex: 1;
+  min-width: 0;
+  padding-right: 40px;
+}
+
+.secret-field .key-toggle {
+  position: absolute;
+  top: 50%;
+  right: 3px;
+  transform: translateY(-50%);
+  color: var(--faint);
+}
+
+.secret-field .key-toggle:hover {
+  color: var(--fg);
+}
+
+.secret-field .key-toggle:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .field-row > input,
 .field-row > select {
   flex: 1;
@@ -2203,6 +2334,111 @@ html[data-theme="light"] .ico-moon {
   gap: 8px;
   padding: 14px 24px 20px;
   border-top: 1px solid var(--border);
+}
+
+.update-state {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.update-state.is-update {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.update-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.update-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+}
+
+.update-card span {
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.update-card strong {
+  font-family: var(--mono);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.update-error {
+  margin: 0;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--danger) 24%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  color: var(--danger);
+  font-size: 11.5px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.update-notes {
+  max-height: 220px;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg-2);
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.65;
+}
+
+.update-assets {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.update-asset {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  color: var(--fg);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.update-asset:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.update-asset-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-asset-size {
+  flex: 0 0 auto;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 9.5px;
 }
 
 .primary,

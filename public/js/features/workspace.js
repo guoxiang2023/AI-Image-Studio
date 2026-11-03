@@ -13,6 +13,7 @@ import { newChatView, openSession, refreshSessions } from './sessions.js';
 import { renderParams } from './params.js';
 import { clearReference } from './reference.js';
 import { loadSkills, updateSkillChip } from './skills.js';
+import { checkForUpdates } from './updates.js';
 
 export async function enterApp(user) {
   state.user = user;
@@ -60,6 +61,8 @@ export async function initWorkspace() {
   if (restoreSession) await openSession(requestedSession);
   else if (state.sessions.length) await openSession(state.sessions[0].id);
   else newChatView();
+
+  void checkForUpdates();
 
   autoGrow();
   updateSendButton();

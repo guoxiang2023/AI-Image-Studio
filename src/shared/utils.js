@@ -23,6 +23,27 @@ export function isAbort(err) {
   return err?.name === 'AbortError' || err?.code === 'ABORT_ERR';
 }
 
+export const MAX_RETRIES = 5;
+export const MAX_ATTEMPTS = MAX_RETRIES + 1;
+export const NETWORK_ERROR_MESSAGE = '网络错误，请检查网络后重试';
+const RETRY_BASE_MS = Math.max(0, Number(process.env.RETRY_BASE_MS || 600));
+
+export function isRetryableStatus(status) {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+export function retryDelay(attempt) {
+  return new Promise((resolve) =>
+    setTimeout(resolve, Math.min(RETRY_BASE_MS * 2 ** attempt, 4000)),
+  );
+}
+
+export function networkError(cause) {
+  const error = new Error(NETWORK_ERROR_MESSAGE);
+  if (cause) error.cause = cause;
+  return error;
+}
+
 export function friendlyError(err) {
   if (isAbort(err)) return '已取消';
   if (err?.name === 'TimeoutError') return '请求超时，请重试';

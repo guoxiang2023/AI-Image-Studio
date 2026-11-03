@@ -1,7 +1,11 @@
 import { getSettings, saveSettings } from '../data/repositories/model-settings.js';
-import { DEFAULT_MODELS } from '../config.js';
+import { DEFAULT_MODELS, LLM_PROTOCOLS } from '../config.js';
 import { getSecretBox } from '../shared/runtime.js';
 import { clamp, keyHint } from '../shared/utils.js';
+
+function normalizeProtocol(value) {
+  return LLM_PROTOCOLS.includes(value) ? value : DEFAULT_MODELS.llm.protocol;
+}
 
 export function defaultSettings() {
   return {
@@ -30,6 +34,7 @@ export function loadSettings(userId) {
   const secretBox = getSecretBox();
   return {
     llm: {
+      protocol: normalizeProtocol(storedLlm.protocol),
       baseUrl: storedLlm.baseUrl || DEFAULT_MODELS.llm.baseUrl,
       model: storedLlm.model || DEFAULT_MODELS.llm.model,
       temperature:
@@ -65,6 +70,7 @@ export function publicSettings(userId) {
   const settings = loadSettings(userId);
   return {
     llm: {
+      protocol: settings.llm.protocol,
       baseUrl: settings.llm.baseUrl,
       model: settings.llm.model,
       apiKeySet: Boolean(settings.llm.apiKey),
@@ -79,10 +85,18 @@ export function publicSettings(userId) {
   };
 }
 
+export function revealApiKey(userId, target) {
+  const settings = loadSettings(userId);
+  return target === 'image' ? settings.image.apiKey : settings.llm.apiKey;
+}
+
 export function draftSettings(body, target, userId) {
   const stored = loadSettings(userId)[target];
   const baseUrl = String(body.baseUrl || stored.baseUrl || '').trim();
   const model = String(body.model || stored.model || '').trim();
+  const protocol = normalizeProtocol(
+    typeof body.protocol === 'string' ? body.protocol : stored.protocol,
+  );
   const apiKey = String(body.apiKey || '').trim() || stored.apiKey;
   if (!baseUrl) return { error: '请填写接口地址' };
   let parsed;
@@ -99,6 +113,7 @@ export function draftSettings(body, target, userId) {
     baseUrl: baseUrl.replace(/\/+$/, ''),
     model,
     apiKey,
+    protocol,
     temperature: stored.temperature,
   };
 }
@@ -115,6 +130,14 @@ export function updateSettingsPatch(userId, body) {
         settings[section][field] = patch[field].trim();
         changed = true;
       }
+    }
+    if (
+      section === 'llm' &&
+      typeof patch.protocol === 'string' &&
+      LLM_PROTOCOLS.includes(patch.protocol)
+    ) {
+      settings.llm.protocol = patch.protocol;
+      changed = true;
     }
     if (typeof patch.apiKey === 'string' && patch.apiKey.trim()) {
       settings[section].apiKey = patch.apiKey.trim();

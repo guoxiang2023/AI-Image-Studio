@@ -66,6 +66,10 @@ jobs:
             - 支持安全 Markdown 渲染：标题、列表、粗体、代码块和链接
             - 优化意图判断：普通问答直接回答，不再强行引向出图
             - 图片生成与修改仍保留流式状态和工具调用
+            - 网络异常、超时和 5xx 自动重试（最多 5 次），失败统一提示
+            - 图片输出后，说明文字继续在图片下方显示
+            - 支持 OpenAI / Anthropic 兼容协议，并可在设置中读取模型列表
+            - 应用内支持检查新版本
 
             ### 下载
 
@@ -91,6 +95,7 @@ jobs:
           files: |
             release-assets/*.dmg
             release-assets/*.exe
+          overwrite_files: true
           draft: false
           prerelease: false
           make_latest: true

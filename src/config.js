@@ -1,12 +1,19 @@
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const LIB_DIR = path.dirname(fileURLToPath(import.meta.url));
+const PACKAGE = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
 export const ROOT = path.resolve(LIB_DIR, '..');
 export const PUBLIC_DIR = path.join(ROOT, 'public');
 export const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(ROOT, 'data'));
 export const USERS_DIR = path.join(DATA_DIR, 'users');
+export const APP_VERSION = process.env.APP_VERSION || PACKAGE.version;
+export const UPDATE_REPO = process.env.UPDATE_REPO || 'guoxiang2023/AI-Image-Studio';
+export const UPDATE_TIMEOUT = Math.max(3, Number(process.env.UPDATE_TIMEOUT_SECONDS || 8));
+export const UPDATE_CACHE_MS =
+  Math.max(60, Number(process.env.UPDATE_CACHE_SECONDS || 600)) * 1000;
 
 export const HOST = process.env.HOST || '0.0.0.0';
 export const PORT = Number(process.env.PORT || 8787);
@@ -19,6 +26,11 @@ export const SESSION_MS = 7 * 24 * 60 * 60 * 1000;
 export const COOKIE_NAME = 'luma_session';
 
 export const IMAGE_TIMEOUT = Number(process.env.IMAGE_TIMEOUT_SECONDS || 240);
+export const LLM_TIMEOUT = Math.max(10, Number(process.env.LLM_TIMEOUT_SECONDS || 300));
+export const LLM_STREAM_IDLE_TIMEOUT = Math.max(
+  10,
+  Number(process.env.LLM_STREAM_IDLE_TIMEOUT_SECONDS || 120),
+);
 export const IMAGE_QUALITY = ['low', 'medium', 'high', 'auto'].includes(process.env.IMAGE_QUALITY)
   ? process.env.IMAGE_QUALITY
   : 'high';
@@ -45,6 +57,7 @@ export const CONTEXT_WINDOW = Math.max(
 
 export const DEFAULT_MODELS = {
   llm: {
+    protocol: 'openai',
     baseUrl: '',
     model: '',
     temperature: 0.7,
@@ -54,6 +67,8 @@ export const DEFAULT_MODELS = {
     model: '',
   },
 };
+
+export const LLM_PROTOCOLS = ['openai', 'anthropic'];
 
 export const MIME = {
   png: 'image/png',
