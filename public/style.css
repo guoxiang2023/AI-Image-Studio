@@ -1049,8 +1049,114 @@ html[data-theme="light"] .ico-moon {
 .msg-content {
   font-size: 15px;
   line-height: 1.78;
-  white-space: pre-wrap;
+  white-space: normal;
   word-break: break-word;
+}
+
+.msg-content > :first-child {
+  margin-top: 0;
+}
+
+.msg-content > :last-child {
+  margin-bottom: 0;
+}
+
+.msg-content p {
+  margin: 0 0 0.75em;
+}
+
+.msg-content h1,
+.msg-content h2,
+.msg-content h3,
+.msg-content h4,
+.msg-content h5,
+.msg-content h6 {
+  margin: 1em 0 0.45em;
+  color: var(--fg);
+  line-height: 1.35;
+  font-weight: 650;
+}
+
+.msg-content h1 {
+  font-size: 1.35em;
+}
+
+.msg-content h2 {
+  font-size: 1.2em;
+}
+
+.msg-content h3 {
+  font-size: 1.08em;
+}
+
+.msg-content h4,
+.msg-content h5,
+.msg-content h6 {
+  font-size: 1em;
+}
+
+.msg-content ul,
+.msg-content ol {
+  margin: 0.35em 0 0.8em;
+  padding-left: 1.35em;
+}
+
+.msg-content li {
+  margin: 0.18em 0;
+}
+
+.msg-content li::marker {
+  color: var(--faint);
+}
+
+.msg-content strong {
+  color: var(--fg);
+  font-weight: 650;
+}
+
+.msg-content em {
+  color: var(--muted);
+}
+
+.msg-content code {
+  padding: 0.12em 0.38em;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bubble);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 0.86em;
+}
+
+.msg-content pre {
+  margin: 0.55em 0 0.9em;
+  padding: 12px 14px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-3);
+  line-height: 1.55;
+}
+
+.msg-content pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 0.86em;
+  white-space: pre;
+}
+
+.msg-content blockquote {
+  margin: 0.55em 0 0.9em;
+  padding: 0.15em 0 0.15em 12px;
+  border-left: 2px solid var(--accent);
+  color: var(--muted);
+}
+
+.msg-content a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .msg-content:empty {

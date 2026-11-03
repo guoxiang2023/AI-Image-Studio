@@ -64,6 +64,12 @@ export async function send() {
       markActiveSession();
     } else if (event.type === 'status') {
       shell.setStatus(event.text);
+    } else if (event.type === 'delta') {
+      assistantMessage.content += event.text;
+      shell.appendText(event.text);
+    } else if (event.type === 'reset') {
+      assistantMessage.content = '';
+      shell.resetText();
     } else if (event.type === 'image') {
       const image = {
         id: event.id,

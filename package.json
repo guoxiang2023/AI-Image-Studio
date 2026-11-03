@@ -1,9 +1,9 @@
 {
   "name": "luma-image-agent",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "type": "module",
-  "description": "Luma · 对话式图片生成智能体",
+  "description": "Luma · 对话式 AI 与图片创作智能体",
   "author": "Luma",
   "license": "UNLICENSED",
   "main": "desktop/main.cjs",
@@ -45,11 +45,17 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         },
         {
           "target": "zip",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         }
       ],
       "gatekeeperAssess": false
@@ -59,11 +65,15 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "zip",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },

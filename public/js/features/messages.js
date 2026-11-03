@@ -11,6 +11,7 @@ import {
 import { openCompare } from './compare.js';
 import { openLightbox, openPromptModal } from './overlays.js';
 import { setPrimaryReference } from './reference.js';
+import { renderMarkdown } from '../core/markdown.js';
 
 function showEmptyState() {
   els.messages.innerHTML = '';
@@ -22,14 +23,16 @@ function showEmptyState() {
   mark.appendChild(icon('spark'));
   wrap.appendChild(mark);
 
-  wrap.appendChild(el('p', 'eyebrow', 'AI IMAGE AGENT'));
+  wrap.appendChild(el('p', 'eyebrow', 'AI CREATIVE AGENT'));
 
   const h1 = el('h1');
   h1.appendChild(document.createTextNode('让想象，'));
   h1.appendChild(el('span', 'grad-text', '成为画面。'));
   wrap.appendChild(h1);
 
-  wrap.appendChild(el('p', 'lead', '描述你的画面，或粘贴 / 上传参考图继续修改。'));
+  wrap.appendChild(
+    el('p', 'lead', '描述你想生成的画面，也可以直接和我聊天、问问题或一起打磨创意。'),
+  );
 
   const examples = el('div', 'examples');
   const prompts = [
@@ -38,6 +41,7 @@ function showEmptyState() {
     '极简产品海报：白色背景上的香水瓶，柔和光影，大面积留白',
     '中国山水画风格，云雾中的孤舟与远山，横幅',
     '画一个电商平台的系统架构图，分层展示客户端、接入、业务服务、中间件和数据层',
+    '解释一下摄影里的景深，并用一个简单例子说明',
   ];
   prompts.forEach((prompt, index) => {
     const btn = el('button', 'example');
@@ -197,7 +201,11 @@ function createAssistantMessage(message) {
   const wrap = el('div', 'msg assistant');
   wrap.appendChild(assistantAvatar());
   const body = el('div', 'body');
-  if (message.content) body.appendChild(el('div', 'msg-content', message.content));
+  if (message.content) {
+    const content = el('div', 'msg-content');
+    renderMarkdown(content, message.content);
+    body.appendChild(content);
+  }
   if (message.images?.length) {
     const grid = el('div', 'image-grid');
     const images = message.images;
@@ -256,6 +264,31 @@ export function createAssistantShell() {
   const images = [];
   const getGroupImages = (target) =>
     images.filter((item) => item.groupId && item.groupId === target.groupId);
+  let text = '';
+  let frame = 0;
+
+  const paint = () => {
+    if (text) {
+      content.hidden = false;
+      renderMarkdown(content, text);
+    } else {
+      content.hidden = true;
+      content.innerHTML = '';
+    }
+  };
+  const schedulePaint = () => {
+    if (frame) return;
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      paint();
+      scrollBottom();
+    });
+  };
+  const cancelPaint = () => {
+    if (!frame) return;
+    cancelAnimationFrame(frame);
+    frame = 0;
+  };
 
   body.appendChild(status);
   body.appendChild(content);
@@ -265,14 +298,29 @@ export function createAssistantShell() {
   scrollBottom();
 
   return {
-    setStatus(text) {
+    setStatus(value) {
       status.hidden = false;
-      statusText.textContent = text;
+      statusText.textContent = value;
       scrollBottom();
     },
-    setText(text) {
+    setText(value) {
       status.hidden = true;
-      content.textContent = text;
+      cancelPaint();
+      text = value;
+      paint();
+      scrollBottom();
+    },
+    appendText(delta) {
+      status.hidden = true;
+      text += delta;
+      schedulePaint();
+    },
+    resetText() {
+      cancelPaint();
+      text = '';
+      paint();
+      status.hidden = false;
+      statusText.textContent = '整理结果…';
       scrollBottom();
     },
     addImage(img) {
@@ -282,12 +330,14 @@ export function createAssistantShell() {
       scrollBottom();
     },
     setError(text) {
+      cancelPaint();
       status.hidden = true;
       const box = el('div', 'msg-error', text);
       body.appendChild(box);
       scrollBottom();
     },
     finish() {
+      cancelPaint();
       status.remove();
       if (!content.textContent && !grid.children.length && !body.querySelector('.msg-error')) {
         content.textContent = '（没有返回内容）';

@@ -8,6 +8,7 @@ import {
 } from '../src/domain/chat-options.js';
 import { toLlmHistory } from '../src/domain/chat.js';
 import { normalizeSkillPayload, skillSystemBlock } from '../src/domain/skill.js';
+import { markdownToHtml } from '../public/js/core/markdown.js';
 
 test('normalizes chat options and references', () => {
   assert.deepEqual(normalizeChatOptions({ aspectRatio: '16:9', count: '9', quality: 'high' }), {
@@ -54,4 +55,15 @@ test('builds LLM history with summary cutoff and image markers', () => {
   assert.equal(history.length, 2);
   assert.match(history[0].content, /参考图/);
   assert.match(history[1].content, /已生成图片/);
+});
+
+test('renders safe Markdown for conversational answers', () => {
+  const html = markdownToHtml(
+    '**重点**\n\n- 第一项\n- 第二项\n\n`code`\n\n<script>alert(1)</script>',
+  );
+  assert.match(html, /<strong>重点<\/strong>/);
+  assert.match(html, /<ul><li>第一项<\/li><li>第二项<\/li><\/ul>/);
+  assert.match(html, /<code>code<\/code>/);
+  assert.doesNotMatch(html, /<script>/);
+  assert.match(html, /&lt;script&gt;/);
 });

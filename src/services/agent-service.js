@@ -1,5 +1,5 @@
 import { SYSTEM_PROMPT } from '../ai/prompts.js';
-import { chatCompletion } from '../ai/llm.js';
+import { streamChatCompletion } from '../ai/llm.js';
 import { runTool } from './tools-service.js';
 import { toLlmHistory } from '../domain/chat.js';
 import { parseArgs } from '../shared/utils.js';
@@ -23,16 +23,29 @@ export async function runAgent(ctx) {
     ? `${systemBase}\n\n【本轮生成参数】\n${params.join('\n')}`
     : systemBase;
   const messages = [{ role: 'system', content: system }, ...toLlmHistory(ctx.chat)];
+  const maxSteps = 6;
   let text = '';
 
-  for (let step = 0; step < 5; step += 1) {
+  for (let step = 0; step < maxSteps; step += 1) {
     ctx.emit({ type: 'status', text: step === 0 ? '理解需求…' : '整理结果…' });
-    const response = await chatCompletion(ctx.models.llm, messages, { signal: ctx.signal });
+    let streamed = '';
+    const response = await streamChatCompletion(ctx.models.llm, messages, {
+      signal: ctx.signal,
+      // The last round must answer in text instead of asking for another tool.
+      tools: step < maxSteps - 1,
+      maxTokens: 4096,
+      onDelta: (delta) => {
+        streamed += delta;
+        ctx.emit({ type: 'delta', text: delta });
+      },
+    });
     const message = response?.choices?.[0]?.message;
     if (!message) throw new Error('对话模型返回为空');
 
     const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
     if (calls.length) {
+      // Any text before a tool call is a preamble, not the final answer.
+      if (streamed.trim()) ctx.emit({ type: 'reset' });
       messages.push({
         role: 'assistant',
         content: message.content || '',
@@ -50,7 +63,7 @@ export async function runAgent(ctx) {
       continue;
     }
 
-    text = String(message.content || '').trim();
+    text = String(message.content || streamed || '').trim();
     break;
   }
 

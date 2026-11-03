@@ -54,19 +54,26 @@ jobs:
         run: ls -lh release-assets
       - uses: softprops/action-gh-release@v2
         with:
-          name: Luma v1.0.1
+          name: Luma v1.0.2
           body: |
-            ## Luma v1.0.1
+            ## Luma v1.0.2
 
-            对话式 AI 图片生成桌面应用。首次运行后，在「设置」里填写 LLM 和图片模型的 API 地址、模型名与 Key。
+            对话式 AI 助手，支持自然对话与图片生成。
+
+            ### 本版改进
+
+            - 普通对话改为流式输出，回复逐字显示
+            - 支持安全 Markdown 渲染：标题、列表、粗体、代码块和链接
+            - 优化意图判断：普通问答直接回答，不再强行引向出图
+            - 图片生成与修改仍保留流式状态和工具调用
 
             ### 下载
 
             | 平台 | 安装包 |
             | --- | --- |
-            | macOS Apple Silicon（M 系列） | `Luma-1.0.1-mac-arm64.dmg` |
-            | macOS Intel | `Luma-1.0.1-mac-x64.dmg` |
-            | Windows x64 | `Luma-1.0.1-win-x64.exe` |
+            | macOS Apple Silicon（M 系列） | `Luma-1.0.2-mac-arm64.dmg` |
+            | macOS Intel | `Luma-1.0.2-mac-x64.dmg` |
+            | Windows x64 | `Luma-1.0.2-win-x64.exe` |
 
             ### 安装说明
 
