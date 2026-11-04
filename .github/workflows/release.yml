@@ -53,9 +53,6 @@ jobs:
           path: |
             dist/*.dmg
             dist/*.exe
-            dist/*.zip
-            dist/latest*.yml
-            dist/*.blockmap
           if-no-files-found: error
 
   release:
@@ -69,6 +66,24 @@ jobs:
           merge-multiple: true
       - name: Inspect assets
         run: ls -lh release-assets
+      - name: Remove non-installer assets
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = context.ref.replace('refs/tags/', '');
+            const { owner, repo } = context.repo;
+            try {
+              const { data: release } = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+              for (const asset of release.assets) {
+                if (!/\.(dmg|exe)$/i.test(asset.name)) {
+                  core.info(`Deleting ${asset.name}`);
+                  await github.rest.repos.deleteReleaseAsset({ owner, repo, asset_id: asset.id });
+                }
+              }
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              core.info('No existing release');
+            }
       - uses: softprops/action-gh-release@v2
         with:
           name: Luma v1.0.3
@@ -93,8 +108,7 @@ jobs:
             - 网络异常、超时和 5xx 自动重试（最多 5 次），失败统一提示
             - 图片输出后，说明文字继续在图片下方显示
             - 支持 OpenAI / Anthropic 兼容协议，并可在设置中读取模型列表
-            - 应用内支持检查新版本
-            - 桌面端支持应用内下载更新，下载完成后重启安装
+            - Release 仅提供安装包，不包含自动更新元数据或 blockmap；更新请下载新安装包覆盖安装
 
             ### 下载
 
@@ -110,7 +124,6 @@ jobs:
               当前构建未做 Apple 公证；如首次打开被 Gatekeeper 拦截，请右键应用选择「打开」，或执行：
               `xattr -dr com.apple.quarantine /Applications/Luma.app`
             - Windows：运行 EXE 安装包。当前构建未做代码签名；如出现 SmartScreen 提示，选择「更多信息」→「仍要运行」。
-            - 桌面端自动更新：macOS 需要 Developer ID 签名并完成公证，否则可能回退为手动下载覆盖安装；Windows 未签名构建也可能触发 SmartScreen。
             - 应用不内置任何 API Key，模型费用由使用者自己的 API 账户承担。
             - 首次使用必须在「模型设置」中自行填写接口地址、模型名称和 Key，不提供默认值。
 
@@ -121,9 +134,6 @@ jobs:
           files: |
             release-assets/*.dmg
             release-assets/*.exe
-            release-assets/*.zip
-            release-assets/latest*.yml
-            release-assets/*.blockmap
           overwrite_files: true
           draft: false
           prerelease: false

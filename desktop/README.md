@@ -15,8 +15,8 @@ npm run desktop
 
 ```bash
 npm run desktop:pack          # 当前平台未打包目录，用于本地验证
-npm run desktop:build:mac     # macOS x64 + arm64，dmg/zip
-npm run desktop:build:win     # Windows x64，nsis/zip
+npm run desktop:build:mac     # macOS x64 + arm64，dmg
+npm run desktop:build:win     # Windows x64，nsis
 ```
 
 macOS 上也可以交叉构建 Windows 包；若本机 electron-builder 工具链缺少依赖，改用 Windows 机器或 Windows CI。产物输出到 `dist/`。
@@ -30,20 +30,9 @@ macOS 上也可以交叉构建 Windows 包；若本机 electron-builder 工具�
 
 彻底改名后，Luma 使用全新的 `userData` 目录；旧的 `~/Library/Application Support/画境` 不会被读取、复制或删除，需要时请手动备份或清理。
 
-## 自动更新
+## 更新
 
-桌面端通过 `electron-updater` 读取 GitHub Release 中的 `latest-mac.yml` / `latest.yml`。检测到新版本后，点击「下载并安装」会在应用内下载；下载完成后再次点击「重启并安装」。
-
-发布新版本时必须同时上传：
-
-- macOS：`Luma-<version>-mac-*.zip`、`latest-mac.yml`、对应的 `.blockmap`
-- Windows：`Luma-<version>-win-x64.exe`、`latest.yml`、对应的 `.blockmap`
-
-自动更新依赖正式签名：
-
-- macOS 必须使用 Developer ID Application 签名并完成 notarization；ad-hoc 签名只能保证启动，不能可靠完成 Squirrel.Mac 更新。
-- Windows 建议使用代码签名证书，否则安装和更新可能触发 SmartScreen。
-- 未满足签名条件时，下载失败会保留「前往下载」的手动下载入口。
+当前 Release 只发布 macOS `.dmg` 和 Windows `.exe` 安装包，不发布 `latest*.yml`、`.zip` 或 `.blockmap`。因此不提供应用内自动更新；需要升级时请下载新安装包覆盖安装。
 
 ## 分发注意
 
