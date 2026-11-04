@@ -19,7 +19,7 @@ jobs:
           - os: macos-15-intel
             artifact: macos-x64
             command: npm run desktop:build:mac:x64
-          - os: macos-15
+          - os: macos-latest
             artifact: macos-arm64
             command: npm run desktop:build:mac:arm64
           - os: windows-latest
@@ -36,6 +36,17 @@ jobs:
         run: ${{ matrix.command }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Verify macOS native architecture
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        run: |
+          if [ "${{ matrix.artifact }}" = "macos-x64" ]; then expected=x64; else expected=arm64; fi
+          found=$(find dist -type d -path '*@img/sharp-darwin-*' -exec basename {} \; | sort -u | tr '\n' ' ')
+          echo "sharp natives: $found"
+          case "$found" in
+            *"sharp-darwin-$expected"*) ;;
+            *) echo "missing sharp-darwin-$expected"; exit 1 ;;
+          esac
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
