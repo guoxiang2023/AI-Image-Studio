@@ -16,9 +16,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
-            artifact: macos
-            command: npm run desktop:build:mac
+          - os: macos-15-intel
+            artifact: macos-x64
+            command: npm run desktop:build:mac:x64
+          - os: macos-15
+            artifact: macos-arm64
+            command: npm run desktop:build:mac:arm64
           - os: windows-latest
             artifact: windows
             command: npm run desktop:build:win
