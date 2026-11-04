@@ -52,27 +52,12 @@
     "mac": {
       "category": "public.app-category.graphics-design",
       "icon": "build/icon.png",
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        }
-      ],
+      "target": "dmg",
       "gatekeeperAssess": false
     },
     "win": {
       "icon": "build/icon.png",
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ]
+      "target": "nsis"
     },
     "nsis": {
       "oneClick": false,

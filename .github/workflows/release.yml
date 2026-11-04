@@ -47,6 +47,27 @@ jobs:
             *"sharp-darwin-$expected"*) ;;
             *) echo "missing sharp-darwin-$expected"; exit 1 ;;
           esac
+      - name: Verify macOS DMG integrity
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for dmg in dist/*.dmg; do
+            if hdiutil verify "$dmg"; then
+              continue
+            fi
+            echo "DMG checksum invalid, rebuilding: $dmg"
+            app=$(find dist -maxdepth 2 -type d -name 'Luma.app' | head -1)
+            test -n "$app"
+            staging=$(mktemp -d)
+            ditto "$app" "$staging/Luma.app"
+            ln -s /Applications "$staging/Applications"
+            rm -f "$dmg"
+            hdiutil create -volname "Luma" -srcfolder "$staging" -ov -format UDZO "$dmg"
+            rm -rf "$staging"
+            hdiutil verify "$dmg"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
@@ -58,7 +79,7 @@ jobs:
   release:
     name: Publish release
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -66,6 +87,16 @@ jobs:
           merge-multiple: true
       - name: Inspect assets
         run: ls -lh release-assets
+      - name: Verify downloaded DMG integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          dmgs=(release-assets/*.dmg)
+          test ${#dmgs[@]} -eq 2
+          for dmg in "${dmgs[@]}"; do
+            hdiutil verify "$dmg"
+          done
       - name: Remove non-installer assets
         uses: actions/github-script@v7
         with:
@@ -101,6 +132,7 @@ jobs:
 
             ### 基础能力
 
+            - 修复 macOS x64 安装包磁盘映像校验错误，DMG 可正常挂载
             - 普通对话改为流式输出，回复逐字显示
             - 支持安全 Markdown 渲染：标题、列表、粗体、代码块和链接
             - 优化意图判断：普通问答直接回答，不再强行引向出图
