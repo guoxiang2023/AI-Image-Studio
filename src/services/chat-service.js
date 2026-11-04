@@ -3,6 +3,7 @@ import {
   getChat as getChatRow,
   insertChat,
   listChats as listChatRows,
+  setChatArchived as setChatArchivedRow,
   updateChat,
   updateChatSummary,
 } from '../data/repositories/chats.js';
@@ -36,6 +37,7 @@ export function loadChatForUser(userId, id) {
     messages,
     summary: row.summary || '',
     summaryUpto: row.summary_upto || 0,
+    archivedAt: row.archived_at || null,
   };
 }
 
@@ -44,14 +46,19 @@ export function saveChat(chat) {
   updateChat(serializeChat(chat));
 }
 
-export function listSessions(userId) {
-  return listChatRows(userId).map((row) => ({
+export function listSessions(userId, { archived = false } = {}) {
+  return listChatRows(userId, { archived }).map((row) => ({
     id: row.id,
     title: row.title || '新对话',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     cover: row.cover_url,
+    archivedAt: row.archived_at || null,
   }));
+}
+
+export function setUserChatArchived(userId, chatId, archived) {
+  return setChatArchivedRow(userId, chatId, archived ? now() : null);
 }
 
 export function deleteUserChat(userId, chatId) {

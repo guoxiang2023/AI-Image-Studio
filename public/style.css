@@ -648,6 +648,31 @@ html[data-theme="light"] .ico-moon {
   text-transform: uppercase;
 }
 
+.session-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.session-filter {
+  border: 0;
+  border-radius: 5px;
+  padding: 2px 4px;
+  background: transparent;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.session-filter:hover {
+  color: var(--fg);
+  background: var(--bubble);
+}
+
 .session-list {
   flex: 1;
   min-height: 0;
@@ -738,8 +763,60 @@ html[data-theme="light"] .ico-moon {
   color: var(--faint);
 }
 
-.session-del {
+.session-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
   opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.session-item:hover .session-actions,
+.session-item.active .session-actions,
+.session-item:focus-within .session-actions {
+  opacity: 1;
+}
+
+.session-archive {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--faint);
+  transition: color 0.15s, background 0.15s;
+}
+
+.session-archive:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.session-archive .ico {
+  width: 13px;
+  height: 13px;
+}
+
+.session-restore {
+  border: 0;
+  border-radius: 6px;
+  padding: 3px 6px;
+  background: transparent;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 9px;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.session-restore:hover {
+  background: var(--accent-soft);
+}
+
+.session-del {
   border: 0;
   border-radius: 6px;
   padding: 3px 6px;
@@ -747,12 +824,8 @@ html[data-theme="light"] .ico-moon {
   color: var(--faint);
   font-size: 14px;
   line-height: 1;
-  transition: opacity 0.15s, color 0.15s, background 0.15s;
-}
-
-.session-item:hover .session-del,
-.session-item.active .session-del {
   opacity: 1;
+  transition: color 0.15s, background 0.15s;
 }
 
 .session-del:hover {
@@ -1597,6 +1670,23 @@ html[data-theme="light"] .ico-moon {
 }
 
 /* -------------------------------- composer -------------------------------- */
+
+.archive-banner {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 12px 24px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel-2) 72%, transparent);
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.archive-banner .mini-btn {
+  padding: 5px 9px;
+}
 
 .composer-wrap {
   padding: 10px 24px calc(18px + env(safe-area-inset-bottom));
@@ -2517,6 +2607,7 @@ html[data-theme="light"] .ico-moon {
   background: rgba(0, 0, 0, 0.88);
   backdrop-filter: blur(14px);
   cursor: default;
+  touch-action: pan-y;
   animation: fade 0.16s ease;
 }
 
@@ -2715,8 +2806,14 @@ html[data-theme="light"] .ico-moon {
     max-height: 62dvh;
   }
 
-  .session-del {
+  .session-actions {
     opacity: 1;
+  }
+
+  .archive-banner {
+    gap: 8px;
+    padding: 10px 14px;
+    font-size: 11.5px;
   }
 
   .hint {

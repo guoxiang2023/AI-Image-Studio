@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Luma · AI Image Studio</title>
-    <link rel="stylesheet" href="/style.css?v=57" />
+    <link rel="stylesheet" href="/style.css?v=59" />
   </head>
   <body>
     <svg class="sprite" aria-hidden="true" focusable="false">
@@ -83,6 +83,10 @@
       <symbol id="i-compare" viewBox="0 0 24 24">
         <rect x="3" y="5" width="7" height="14" rx="1" />
         <rect x="14" y="5" width="7" height="14" rx="1" />
+      </symbol>
+      <symbol id="i-archive" viewBox="0 0 24 24">
+        <rect x="4" y="4" width="16" height="5" rx="1" />
+        <path d="M6 9v10a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V9M10 13h4" />
       </symbol>
       <symbol id="i-search" viewBox="0 0 24 24">
         <circle cx="10.5" cy="10.5" r="6" />
@@ -196,7 +200,10 @@
           <span>运营物料</span>
         </button>
 
-        <div class="side-label">会话</div>
+        <div class="side-label session-label">
+          <span id="sessionLabel">我的会话</span>
+          <button class="session-filter" id="archiveToggle" type="button">已归档</button>
+        </div>
         <div class="session-list" id="sessionList"></div>
 
         <div class="sidebar-foot">
@@ -238,6 +245,11 @@
 
         <div class="chat-scroll" id="chatScroll">
           <div class="messages" id="messages"></div>
+        </div>
+
+        <div class="archive-banner" id="archiveBanner" hidden>
+          <span>这个会话已归档，恢复后可继续对话。</span>
+          <button type="button" class="mini-btn" id="restoreArchived">恢复会话</button>
         </div>
 
         <section class="gallery" id="galleryView" hidden>
@@ -827,6 +839,6 @@
     <div class="toast" id="toast" hidden></div>
     <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp" multiple hidden />
 
-    <script type="module" src="/js/app.js?v=57"></script>
+    <script type="module" src="/js/app.js?v=59"></script>
   </body>
 </html>

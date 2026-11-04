@@ -64,6 +64,9 @@ function buildRouter() {
   router.get('/api/sessions/:id', ({ req, res, user, params }) =>
     handleSession(req, res, user, params.id),
   );
+  router.patch('/api/sessions/:id', ({ req, res, user, params }) =>
+    handleSession(req, res, user, params.id),
+  );
   router.delete('/api/sessions/:id', ({ req, res, user, params }) =>
     handleSession(req, res, user, params.id),
   );

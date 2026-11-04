@@ -6,6 +6,8 @@ export const state = {
   config: null,
   sessions: [],
   sessionId: null,
+  sessionFilter: 'active',
+  chatArchived: false,
   view: 'chat',
   chatTitle: '新对话',
   messages: [],

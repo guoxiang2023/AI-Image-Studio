@@ -399,6 +399,7 @@ export async function openGallery() {
   state.view = 'gallery';
   els.chatScroll.hidden = true;
   els.composerWrap.hidden = true;
+  els.archiveBanner.hidden = true;
   els.galleryView.hidden = false;
   els.topbarLabel.textContent = 'GALLERY';
   els.chatTitle.textContent = '我的画册';

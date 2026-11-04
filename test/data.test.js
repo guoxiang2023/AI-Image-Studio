@@ -14,6 +14,7 @@ import {
   getChat,
   insertChat,
   listChats,
+  setChatArchived,
   updateChat,
 } from '../src/data/repositories/chats.js';
 import {
@@ -63,6 +64,13 @@ test('chat repository round-trips serialized documents', () => {
   assert.equal(getChat('u1', 'c1').title, 'hello');
   updateChat({ ...document, title: 'updated', updatedAt: 3 });
   assert.equal(getChat('u1', 'c1').title, 'updated');
+  setChatArchived('u1', 'c1', 4);
+  assert.equal(listChats('u1').length, 0);
+  assert.equal(listChats('u1', { archived: true })[0].id, 'c1');
+  assert.equal(getChat('u1', 'c1').archived_at, 4);
+  setChatArchived('u1', 'c1', null);
+  assert.equal(listChats('u1')[0].id, 'c1');
+  assert.equal(listChats('u1', { archived: true }).length, 0);
   deleteChat('u1', 'c1');
   assert.equal(getChat('u1', 'c1'), undefined);
 });

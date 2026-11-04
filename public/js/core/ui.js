@@ -77,8 +77,9 @@ export function showChatView() {
   state.view = 'chat';
   els.galleryView.hidden = true;
   els.chatScroll.hidden = false;
-  els.composerWrap.hidden = false;
-  els.topbarLabel.textContent = 'SESSION';
+  els.composerWrap.hidden = Boolean(state.chatArchived);
+  els.archiveBanner.hidden = !state.chatArchived;
+  els.topbarLabel.textContent = state.chatArchived ? 'ARCHIVED' : 'SESSION';
   els.galleryNav.classList.remove('active');
   els.chatTitle.textContent = state.chatTitle || '新对话';
 }

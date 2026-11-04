@@ -66,6 +66,20 @@ function updateComposer() {
   updateSendButton();
 }
 
+function openChatLightbox(image) {
+  const nodes = Array.from(els.messages.querySelectorAll('.image-card img'));
+  const index = Math.max(0, nodes.indexOf(image));
+  const items = nodes.map((node) => ({
+    url: node.currentSrc || node.src,
+    alt: node.alt || '生成图片',
+  }));
+  const current = items[index] || {
+    url: image.currentSrc || image.src,
+    alt: image.alt || '生成图片',
+  };
+  openLightbox(current.url, { images: items, index });
+}
+
 function createImageCard(img, context = {}) {
   const card = el('figure', 'image-card');
   const ratio = img.aspectRatio || '';
@@ -78,7 +92,7 @@ function createImageCard(img, context = {}) {
   image.src = img.url;
   image.alt = img.prompt || '生成图片';
   image.loading = 'lazy';
-  image.addEventListener('click', () => openLightbox(img.url));
+  image.addEventListener('click', () => openChatLightbox(image));
   card.appendChild(image);
 
   const info = el('div', 'image-info');

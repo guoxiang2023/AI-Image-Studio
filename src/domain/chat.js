@@ -41,6 +41,7 @@ export function chatToClient(chat) {
     lastImageId: chat.lastImageId,
     summary: chat.summary || '',
     summaryUpto: chat.summaryUpto || 0,
+    archivedAt: chat.archivedAt || null,
     messages: chat.messages.filter(
       (message) => !(message.draft && !message.content && !(message.images?.length)),
     ),

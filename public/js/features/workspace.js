@@ -29,6 +29,8 @@ export async function initWorkspace() {
   state.config = null;
   state.sessions = [];
   state.sessionId = null;
+  state.sessionFilter = 'active';
+  state.chatArchived = false;
   state.messages = [];
   state.summary = '';
   state.summaryUpto = 0;
@@ -65,10 +67,10 @@ export async function initWorkspace() {
 
   await refreshSessions();
   const requestedSession = new URLSearchParams(location.search).get('session');
-  const restoreSession =
-    requestedSession && state.sessions.some((session) => session.id === requestedSession);
-  if (restoreSession) await openSession(requestedSession);
-  else if (state.sessions.length) await openSession(state.sessions[0].id);
+  if (requestedSession) {
+    const opened = await openSession(requestedSession);
+    if (!opened && state.sessions.length) await openSession(state.sessions[0].id);
+  } else if (state.sessions.length) await openSession(state.sessions[0].id);
   else newChatView();
 
   void checkForUpdates();
@@ -87,6 +89,8 @@ export function resetWorkspace() {
   state.config = null;
   state.sessions = [];
   state.sessionId = null;
+  state.sessionFilter = 'active';
+  state.chatArchived = false;
   state.messages = [];
   state.options = { aspectRatio: null, count: null, quality: null };
   state.qr = null;

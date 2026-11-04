@@ -11,7 +11,7 @@ import {
   setAuthMode,
   submitAuth,
 } from '../features/auth.js';
-import { newChatView } from '../features/sessions.js';
+import { newChatView, restoreSession, toggleSessionFilter } from '../features/sessions.js';
 import {
   backToChat,
   closeFolderModal,
@@ -76,6 +76,10 @@ export function bindEvents() {
 
   els.sendBtn.addEventListener('click', send);
   els.newChat.addEventListener('click', newChatView);
+  els.archiveToggle.addEventListener('click', toggleSessionFilter);
+  els.restoreArchived.addEventListener('click', () => {
+    if (state.sessionId) restoreSession(state.sessionId);
+  });
   els.attachBtn.addEventListener('click', () => els.fileInput.click());
   els.fileInput.addEventListener('change', () => uploadFiles(els.fileInput.files));
   document.addEventListener('paste', handlePaste);
@@ -224,7 +228,33 @@ export function bindEvents() {
     if (event.target === els.updateModal) closeUpdateModal();
   });
 
+  let lightboxSwipe = null;
+  let suppressLightboxClick = false;
+  els.lightbox.addEventListener('pointerdown', (event) => {
+    if (event.pointerType === 'mouse' || lightboxSwipe) return;
+    if (event.target.closest('.lightbox-nav')) return;
+    lightboxSwipe = { id: event.pointerId, x: event.clientX, y: event.clientY };
+  });
+  els.lightbox.addEventListener('pointerup', (event) => {
+    if (!lightboxSwipe || event.pointerId !== lightboxSwipe.id) return;
+    const dx = event.clientX - lightboxSwipe.x;
+    const dy = event.clientY - lightboxSwipe.y;
+    lightboxSwipe = null;
+    if (Math.abs(dx) < 48 || Math.abs(dx) <= Math.abs(dy) * 1.2) return;
+    suppressLightboxClick = true;
+    setTimeout(() => {
+      suppressLightboxClick = false;
+    }, 350);
+    stepLightbox(dx < 0 ? 1 : -1);
+  });
+  els.lightbox.addEventListener('pointercancel', () => {
+    lightboxSwipe = null;
+  });
   els.lightbox.addEventListener('click', (event) => {
+    if (suppressLightboxClick) {
+      suppressLightboxClick = false;
+      return;
+    }
     if (event.target === els.lightbox || event.target === els.lightboxImg) closeLightbox();
   });
   els.lightboxPrev.addEventListener('click', (event) => {

@@ -120,3 +120,18 @@ test('renders pipe tables with alignment and inline text', () => {
   assert.match(html, /<code>代码<\/code>/);
   assert.doesNotMatch(html, /\| :---/);
 });
+
+test('renders tables whose delimiter cells use two hyphens', () => {
+  const html = markdownToHtml(
+    [
+      '| 模块 | 一期 | 二期 | 三期 |',
+      '|---|:--:|:--:|:--:|',
+      '| 项目损益核算 | ● | | |',
+      '| 费用报销 | | ● | |',
+    ].join('\n'),
+  );
+  assert.match(html, /<div class="table-wrap"><table>/);
+  assert.match(html, /<th class="align-center">一期<\/th>/);
+  assert.match(html, /<td class="align-center">●<\/td>/);
+  assert.doesNotMatch(html, /\|---\|/);
+});

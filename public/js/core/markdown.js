@@ -54,7 +54,7 @@ function splitTableRow(line) {
 function tableAlignments(line) {
   if (!String(line || '').includes('|')) return null;
   return splitTableRow(line).map((cell) => {
-    if (!/^:?-{3,}:?$/.test(cell)) return null;
+    if (!/^:?-+:?$/.test(cell)) return null;
     if (cell.startsWith(':') && cell.endsWith(':')) return 'center';
     if (cell.endsWith(':')) return 'right';
     return 'left';
