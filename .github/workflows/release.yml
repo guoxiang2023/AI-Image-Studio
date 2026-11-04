@@ -39,6 +39,9 @@ jobs:
           path: |
             dist/*.dmg
             dist/*.exe
+            dist/*.zip
+            dist/latest*.yml
+            dist/*.blockmap
           if-no-files-found: error
 
   release:
@@ -52,30 +55,22 @@ jobs:
           merge-multiple: true
       - name: Inspect assets
         run: ls -lh release-assets
-      - name: Delete existing release
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const tag = 'v1.0.2';
-            const { owner, repo } = context.repo;
-            try {
-              const { data } = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
-              core.info(`Deleting release ${data.id}, published ${data.published_at}`);
-              await github.rest.repos.deleteRelease({ owner, repo, release_id: data.id });
-              core.info('Existing release deleted');
-            } catch (error) {
-              if (error.status !== 404) throw error;
-              core.info('No existing release to delete');
-            }
       - uses: softprops/action-gh-release@v2
         with:
-          name: Luma v1.0.2
+          name: Luma v1.0.3
           body: |
-            ## Luma v1.0.2
+            ## Luma v1.0.3
 
             对话式 AI 助手，支持自然对话与图片生成。
 
-            ### 本版改进
+            ### 本版新增
+
+            - AI 运营物料生成器：可选择或上传参考图，保留参考版式与视觉语言，按新主题替换主体、文案和二维码
+            - 内置 10 张运营参考图库（Banner、海报、弹窗、封面、信息流、启动页）
+            - 新增「画面主体」输入；未填写时按标题自动推断，默认替换参考图中的商品、饮料、人物等主体，避免只换文案不换主体
+            - 生成结果自动进入「我的画册」
+
+            ### 基础能力
 
             - 普通对话改为流式输出，回复逐字显示
             - 支持安全 Markdown 渲染：标题、列表、粗体、代码块和链接
@@ -85,14 +80,15 @@ jobs:
             - 图片输出后，说明文字继续在图片下方显示
             - 支持 OpenAI / Anthropic 兼容协议，并可在设置中读取模型列表
             - 应用内支持检查新版本
+            - 桌面端支持应用内下载更新，下载完成后重启安装
 
             ### 下载
 
             | 平台 | 安装包 |
             | --- | --- |
-            | macOS Apple Silicon（M 系列） | `Luma-1.0.2-mac-arm64.dmg` |
-            | macOS Intel | `Luma-1.0.2-mac-x64.dmg` |
-            | Windows x64 | `Luma-1.0.2-win-x64.exe` |
+            | macOS Apple Silicon（M 系列） | `Luma-1.0.3-mac-arm64.dmg` |
+            | macOS Intel | `Luma-1.0.3-mac-x64.dmg` |
+            | Windows x64 | `Luma-1.0.3-win-x64.exe` |
 
             ### 安装说明
 
@@ -100,6 +96,7 @@ jobs:
               当前构建未做 Apple 公证；如首次打开被 Gatekeeper 拦截，请右键应用选择「打开」，或执行：
               `xattr -dr com.apple.quarantine /Applications/Luma.app`
             - Windows：运行 EXE 安装包。当前构建未做代码签名；如出现 SmartScreen 提示，选择「更多信息」→「仍要运行」。
+            - 桌面端自动更新：macOS 需要 Developer ID 签名并完成公证，否则可能回退为手动下载覆盖安装；Windows 未签名构建也可能触发 SmartScreen。
             - 应用不内置任何 API Key，模型费用由使用者自己的 API 账户承担。
             - 首次使用必须在「模型设置」中自行填写接口地址、模型名称和 Key，不提供默认值。
 
@@ -110,6 +107,9 @@ jobs:
           files: |
             release-assets/*.dmg
             release-assets/*.exe
+            release-assets/*.zip
+            release-assets/latest*.yml
+            release-assets/*.blockmap
           overwrite_files: true
           draft: false
           prerelease: false

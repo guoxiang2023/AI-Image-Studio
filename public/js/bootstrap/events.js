@@ -34,18 +34,21 @@ import {
 } from '../features/settings.js';
 import { closeParams, renderParams, resetParams, toggleParams } from '../features/params.js';
 import {
+  clearActiveQr,
+  clearPresetSelection,
+  clearTemplateSelection,
   closeTemplates,
-  handleSkillFileChange,
   openTemplates,
+  selectTemplateAspect,
   submitTemplate,
-  triggerSkillImport,
 } from '../features/templates.js';
-import { clearActiveSkill } from '../features/skills.js';
 import { closeCompare } from '../features/compare.js';
+import { bindStudioEvents } from '../features/studio.js';
 import {
   checkForUpdates,
   closeUpdateModal,
   openUpdateModal,
+  startDesktopUpdate,
 } from '../features/updates.js';
 import {
   closeLightbox,
@@ -53,9 +56,12 @@ import {
   closeSidebar,
   copyActivePrompt,
   openSidebar,
+  stepLightbox,
 } from '../features/overlays.js';
 
 export function bindEvents() {
+  bindStudioEvents();
+
   els.input.addEventListener('input', () => {
     autoGrow();
     updateSendButton();
@@ -74,9 +80,7 @@ export function bindEvents() {
   els.fileInput.addEventListener('change', () => uploadFiles(els.fileInput.files));
   document.addEventListener('paste', handlePaste);
   els.templateBtn.addEventListener('click', openTemplates);
-  els.activeSkillChip.addEventListener('click', clearActiveSkill);
-  els.importSkillBtn.addEventListener('click', triggerSkillImport);
-  els.skillFileInput.addEventListener('change', handleSkillFileChange);
+  els.qrChip.addEventListener('click', clearActiveQr);
   els.paramsBtn.addEventListener('click', (event) => {
     event.stopPropagation();
     toggleParams();
@@ -173,7 +177,13 @@ export function bindEvents() {
 
   els.closeTemplateModal.addEventListener('click', closeTemplates);
   els.cancelTemplate.addEventListener('click', closeTemplates);
+  els.clearTemplateSelection.addEventListener('click', clearTemplateSelection);
+  els.clearPresetSelection.addEventListener('click', clearPresetSelection);
   els.createTemplate.addEventListener('click', submitTemplate);
+  els.templateAspectChips.addEventListener('click', (event) => {
+    const chip = event.target.closest('[data-aspect]');
+    if (chip) selectTemplateAspect(chip.dataset.aspect || '');
+  });
   els.templateModal.addEventListener('click', (event) => {
     if (event.target === els.templateModal) closeTemplates();
   });
@@ -209,11 +219,22 @@ export function bindEvents() {
   els.recheckUpdate.addEventListener('click', () =>
     checkForUpdates({ force: true, showModal: true, notify: true }),
   );
+  els.updateInstall.addEventListener('click', startDesktopUpdate);
   els.updateModal.addEventListener('click', (event) => {
     if (event.target === els.updateModal) closeUpdateModal();
   });
 
-  els.lightbox.addEventListener('click', closeLightbox);
+  els.lightbox.addEventListener('click', (event) => {
+    if (event.target === els.lightbox || event.target === els.lightboxImg) closeLightbox();
+  });
+  els.lightboxPrev.addEventListener('click', (event) => {
+    event.stopPropagation();
+    stepLightbox(-1);
+  });
+  els.lightboxNext.addEventListener('click', (event) => {
+    event.stopPropagation();
+    stepLightbox(1);
+  });
 
   document.addEventListener('click', (event) => {
     if (els.paramPanel.hidden) return;
@@ -222,12 +243,18 @@ export function bindEvents() {
   });
 
   document.addEventListener('keydown', (event) => {
+    if (!els.lightbox.hidden && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+      event.preventDefault();
+      stepLightbox(event.key === 'ArrowLeft' ? -1 : 1);
+      return;
+    }
     if (event.key !== 'Escape') return;
     // The settings dialog is dismissed only by its X button. This prevents a
     // dragged text selection or Escape from discarding unsaved edits.
     if (!els.settingsModal.hidden) return;
     if (!els.lightbox.hidden) closeLightbox();
     else if (!els.folderModal.hidden) closeFolderModal();
+    else if (!els.studioModal.hidden) return;
     else if (!els.templateModal.hidden) closeTemplates();
     else if (!els.tagModal.hidden) closeTagModal();
     else if (!els.promptModal.hidden) closePromptModal();

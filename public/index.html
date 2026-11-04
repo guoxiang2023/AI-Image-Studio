@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Luma · AI Image Studio</title>
-    <link rel="stylesheet" href="/style.css?v=28" />
+    <link rel="stylesheet" href="/style.css?v=57" />
   </head>
   <body>
     <svg class="sprite" aria-hidden="true" focusable="false">
@@ -65,6 +65,10 @@
       <symbol id="i-template" viewBox="0 0 24 24">
         <rect x="3" y="4" width="18" height="16" rx="2" />
         <path d="M3 9h18M9 9v11" />
+      </symbol>
+      <symbol id="i-qr" viewBox="0 0 24 24">
+        <path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4z" fill="none" stroke="currentColor" stroke-width="1.5" />
+        <path d="M14 14h2v2h-2zM18 14h2v2h-2zM14 18h2v2h-2zM18 18h2v2h-2z" fill="currentColor" />
       </symbol>
       <symbol id="i-star" viewBox="0 0 24 24">
         <path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.2 1 5.9-5.2-2.8-5.2 2.8 1-5.9-4.3-4.2 5.9-.9L12 3.5z" />
@@ -187,6 +191,11 @@
           <span>我的画册</span>
         </button>
 
+        <button class="nav-item" id="studioNav">
+          <svg class="ico"><use href="#i-template" /></svg>
+          <span>运营物料</span>
+        </button>
+
         <div class="side-label">会话</div>
         <div class="session-list" id="sessionList"></div>
 
@@ -237,6 +246,7 @@
               <div class="gallery-title-block">
                 <p class="eyebrow">MY GALLERY</p>
                 <h1>我的画册 <span class="gallery-total" id="galleryTotal"></span></h1>
+                <span class="gallery-live" id="galleryLive" hidden><i></i>生成中…</span>
                 <p class="gallery-sub">所有生成过的图片都会自动收进这里。</p>
               </div>
               <div class="gallery-head-actions">
@@ -279,10 +289,14 @@
                 <svg class="ico"><use href="#i-template" /></svg>
                 模板
               </button>
-              <button type="button" class="tool-chip skill-chip" id="activeSkillChip" title="点击清除当前 Skill" hidden>
-                <svg class="ico"><use href="#i-spark" /></svg>
-                <span id="activeSkillName"></span>
-                <span class="skill-x" aria-hidden="true">×</span>
+              <button type="button" class="tool-chip" id="studioBtn">
+                <svg class="ico"><use href="#i-template" /></svg>
+                物料
+              </button>
+              <button type="button" class="tool-chip qr-chip" id="qrChip" hidden title="点击移除二维码">
+                <svg class="ico"><use href="#i-qr" /></svg>
+                <span id="qrChipLabel">二维码</span>
+                <span class="qr-x" aria-hidden="true">×</span>
               </button>
               <button type="button" class="tool-chip" id="paramsBtn">
                 <svg class="ico"><use href="#i-sliders" /></svg>
@@ -316,8 +330,12 @@
               <div class="param-row">
                 <span class="param-label">质量</span>
                 <div class="param-chips" id="qualityChips">
-                  <button type="button" data-quality="">自动</button>
-                  <button type="button" data-quality="high">高质量</button>
+                  <button type="button" data-quality="">默认</button>
+                  <button type="button" data-quality="low">低</button>
+                  <button type="button" data-quality="medium">中</button>
+                  <button type="button" data-quality="high">高</button>
+                  <button type="button" data-quality="xhigh">极高</button>
+                  <button type="button" data-quality="max">最大</button>
                 </div>
               </div>
               <div class="param-foot">
@@ -374,6 +392,17 @@
                 <button type="button" class="mini-btn" id="llmModelFetch">获取列表</button>
               </div>
             </label>
+            <label>推理等级
+              <select id="llmReasoningEffort">
+                <option value="">默认（跟随模型）</option>
+                <option value="low">低 · low</option>
+                <option value="medium">中 · medium</option>
+                <option value="high">高 · high</option>
+                <option value="xhigh">极高 · xhigh</option>
+                <option value="max">最大 · max</option>
+              </select>
+            </label>
+            <p class="section-note">OpenAI 兼容接口发送 <code>reasoning_effort</code>，Anthropic 发送 <code>output_config.effort</code>；模型或网关不支持时请保持默认。</p>
             <label>API Key
               <div class="secret-field">
                 <input id="llmKey" type="password" spellcheck="false" placeholder="留空保持不变" />
@@ -405,6 +434,17 @@
                 <button type="button" class="mini-btn" id="imageModelFetch">获取列表</button>
               </div>
             </label>
+            <label>默认质量
+              <select id="imageQuality">
+                <option value="auto">自动 · auto</option>
+                <option value="low">低 · low</option>
+                <option value="medium">中 · medium</option>
+                <option value="high">高 · high</option>
+                <option value="xhigh">极高 · xhigh</option>
+                <option value="max">最大 · max</option>
+              </select>
+            </label>
+            <p class="section-note">每轮「参数 → 质量」会覆盖这里的默认值；<code>xhigh</code> / <code>max</code> 仅部分新模型支持。</p>
             <label>API Key
               <div class="secret-field">
                 <input id="imageKey" type="password" spellcheck="false" placeholder="留空保持不变" />
@@ -435,7 +475,14 @@
     </div>
 
     <div class="lightbox" id="lightbox" hidden>
+      <button class="lightbox-nav lightbox-prev" id="lightboxPrev" type="button" aria-label="上一张">
+        <svg class="ico"><use href="#i-arrow-left" /></svg>
+      </button>
       <img id="lightboxImg" alt="" />
+      <button class="lightbox-nav lightbox-next" id="lightboxNext" type="button" aria-label="下一张">
+        <svg class="ico"><use href="#i-arrow-right" /></svg>
+      </button>
+      <span class="lightbox-count" id="lightboxCount"></span>
     </div>
 
     <div class="modal-backdrop" id="folderModal" hidden>
@@ -461,6 +508,105 @@
       </div>
     </div>
 
+    <div class="modal-backdrop" id="studioModal" hidden>
+      <div class="modal studio-modal" role="dialog" aria-modal="true" aria-labelledby="studioModalTitle">
+        <div class="modal-head">
+          <div>
+            <p class="modal-eyebrow">AI OPERATIONS STUDIO</p>
+            <h2 id="studioModalTitle">AI 物料生成器</h2>
+          </div>
+          <button class="icon-btn" id="closeStudioModal" aria-label="关闭">
+            <svg class="ico"><use href="#i-close" /></svg>
+          </button>
+        </div>
+        <div class="modal-body marketing-body">
+          <div class="marketing-controls studio-controls">
+            <section class="marketing-form-section studio-section">
+              <div class="template-section-head">
+                <span class="template-section-title">1. 选择参考风格<small>AI 参考它的画面语言与版式</small></span>
+                <button type="button" class="mini-btn" id="studioUploadRef">上传参考图</button>
+              </div>
+              <p class="studio-help">先选一张接近你目标的参考图。默认保留它的构图和排版节奏，把文案换成你的内容。</p>
+              <div class="studio-reference-grid" id="studioReferenceGrid"></div>
+              <p class="studio-reference-empty" id="studioReferenceEmpty" hidden>参考图库加载中…</p>
+            </section>
+
+            <section class="marketing-form-section studio-section">
+              <div class="template-section-head">
+                <span class="template-section-title">2. 填写新内容<small>会逐字写进画面</small></span>
+                <button type="button" class="mini-btn ghost" id="studioClearReference" hidden>清除参考</button>
+              </div>
+              <div class="studio-selected" id="studioSelected" hidden>
+                <img id="studioReferencePreview" alt="当前参考图" />
+                <div>
+                  <strong id="studioReferenceName">—</strong>
+                  <span id="studioReferenceMeta">—</span>
+                </div>
+              </div>
+              <label>主标题<input id="studioTitle" maxlength="60" placeholder="例如：国庆畅玩" /></label>
+              <label>副标题<input id="studioSubtitle" maxlength="100" placeholder="例如：流量好礼 5 折起" /></label>
+              <label>画面主体（可选）<input id="studioSubject" maxlength="200" placeholder="例如：耳机、音符、音乐 App 界面；留空会按标题自动推断" /></label>
+              <label>权益 / 卖点<textarea id="studioPoints" rows="3" maxlength="600" placeholder="每行一条，例如：&#10;视频会员月卡 5 折&#10;出行券包立减 20 元"></textarea></label>
+              <div class="studio-field-row">
+                <label>按钮文案<input id="studioCta" maxlength="30" placeholder="立即领取" /></label>
+                <label>底部小字<input id="studioLegal" maxlength="160" placeholder="活动规则详见页面" /></label>
+              </div>
+              <label>补充要求<textarea id="studioExtra" rows="2" maxlength="500" placeholder="例如：人物换成年轻女生，主色改成移动蓝，不要出现额外文字"></textarea></label>
+              <div class="studio-field-row">
+                <label>生成方式
+                  <select id="studioMode">
+                    <option value="edit">保留参考版式 · 换主体</option>
+                    <option value="generate">只参考风格 · 新构图</option>
+                  </select>
+                </label>
+                <label>输出画幅
+                  <select id="studioAspect">
+                    <option value="">跟随参考（推荐）</option>
+                    <option value="1:1">1:1</option>
+                    <option value="3:4">3:4</option>
+                    <option value="4:3">4:3</option>
+                    <option value="9:16">9:16</option>
+                    <option value="16:9">16:9</option>
+                    <option value="3:2">3:2</option>
+                    <option value="2:3">2:3</option>
+                  </select>
+                </label>
+                <label>数量
+                  <select id="studioCount">
+                    <option value="1">1 张</option>
+                    <option value="2">2 张</option>
+                    <option value="3">3 张</option>
+                    <option value="4">4 张</option>
+                  </select>
+                </label>
+              </div>
+              <label>二维码链接（可选）<input id="studioQrUrl" type="url" maxlength="1024" placeholder="https://..." /></label>
+            </section>
+          </div>
+
+          <aside class="marketing-preview-pane studio-result-pane">
+            <div class="marketing-preview-head">
+              <span>AI 生成结果</span>
+              <span class="marketing-preview-size" id="studioResultSize">—</span>
+            </div>
+            <div class="marketing-preview-frame studio-result-frame">
+              <div class="marketing-preview-empty" id="studioResultEmpty">选择参考风格并填写主标题，然后生成</div>
+              <img id="studioResultImage" alt="AI 生成结果" hidden />
+              <div class="marketing-preview-loading" id="studioResultLoading" hidden>AI 正在按参考图重绘…</div>
+              <div class="studio-result-grid" id="studioResultGrid" hidden></div>
+            </div>
+            <div class="marketing-preview-status" id="studioResultStatus"></div>
+            <div class="marketing-preview-actions">
+              <a class="mini-btn" id="studioDownload" hidden download="ai-material.png">下载 PNG</a>
+              <button class="primary" id="studioGenerate" type="button">生成图片</button>
+            </div>
+            <p class="section-note">参考图只提供视觉语言和版式，默认会替换参考图里的商品、饮料、人物等主体；想保留原主体请在「补充要求」里说明。生成结果会保存到「我的画册」。图片里的文字由模型重绘，复杂长文案建议生成后检查一遍；「跟随参考」会按参考图比例生成，平台若要求固定像素，可下载后等比缩放。</p>
+          </aside>
+        </div>
+      </div>
+      <input id="studioReferenceInput" class="marketing-file-input" type="file" accept="image/png,image/jpeg,image/webp" />
+    </div>
+
     <div class="modal-backdrop" id="templateModal" hidden>
       <div class="modal template-modal" role="dialog" aria-modal="true" aria-labelledby="templateTitle">
         <div class="modal-head">
@@ -473,39 +619,94 @@
           </button>
         </div>
         <div class="modal-body">
+          <div class="template-selection">
+            <span class="template-selection-label">当前组合</span>
+            <span class="template-selection-text" id="templateSelectionText" aria-live="polite">自由创作</span>
+            <button type="button" class="mini-btn" id="clearPresetSelection" hidden>清除风格</button>
+            <button type="button" class="mini-btn" id="clearTemplateSelection">清空</button>
+          </div>
           <div class="template-section-head">
-            <span>内置模板</span>
+            <span class="template-section-title">创作模板<small>先选 · 完整 brief</small></span>
           </div>
           <div class="template-grid" id="templateGrid"></div>
           <div class="template-section-head">
-            <span>我的 Skills</span>
-            <span class="template-section-actions">
-              <span class="skill-count" id="skillCount"></span>
-              <button type="button" class="mini-btn" id="importSkillBtn">导入 Skill</button>
-              <input type="file" id="skillFileInput" accept=".json,application/json" hidden />
-            </span>
+            <span class="template-section-title">运营宣传<small>权益 · 促销 · 上新 · 订购</small></span>
           </div>
-          <div class="template-grid skill-grid" id="skillGrid"></div>
-          <p class="section-note skill-empty" id="skillEmpty">还没有导入 Skill。JSON 至少包含 name，以及 instructions/template 之一；支持 {{subject}} / {{style}} / {{text}} / {{aspect}}。</p>
+          <div class="template-grid" id="opsTemplateGrid"></div>
+          <div class="template-section-head">
+            <span class="template-section-title">风格灵感<small>精选 16 · 可叠加</small></span>
+            <a class="preset-credit" href="https://github.com/yang0/handraw-style" target="_blank" rel="noopener noreferrer">
+              预览：handraw-style + Luma
+            </a>
+          </div>
+          <p class="preset-note">预览是风格参考，不保证同款；套用会覆盖「场景 / 风格」和画幅，保留主体与文字。</p>
+          <div class="preset-filters" id="presetFilters" role="group" aria-label="风格分类"></div>
+          <div class="template-grid preset-grid" id="presetGrid"></div>
           <div class="template-form">
-            <label>主体<textarea id="templateSubject" rows="2" placeholder="例如：一只橘猫坐在窗台上晒太阳"></textarea></label>
-            <label>场景 / 风格<textarea id="templateStyle" rows="2" placeholder="例如：日系插画，柔和逆光，暖色纸张质感"></textarea></label>
-            <div class="template-row">
-              <label>画面文字<input id="templateText" maxlength="80" placeholder="可留空；会逐字渲染" /></label>
-              <label>画幅
-                <select id="templateAspect">
-                  <option value="">自动</option>
-                  <option value="1:1">1:1</option>
-                  <option value="3:4">3:4</option>
-                  <option value="4:3">4:3</option>
-                  <option value="9:16">9:16</option>
-                  <option value="16:9">16:9</option>
-                  <option value="3:2">3:2</option>
-                  <option value="2:3">2:3</option>
-                </select>
-              </label>
+            <div class="template-section-head">
+              <span class="template-section-title">创作参数<small>主体越具体，出图越稳定</small></span>
             </div>
-            <p class="section-note" id="templateHint">先选一个模板，再补充主体和风格；当前参考图会一并使用。</p>
+            <label class="template-field">
+              <span class="template-field-head"><span>主体</span><small>一句话描述画面</small></span>
+              <textarea id="templateSubject" rows="2" placeholder="例如：一只橘猫坐在窗台上晒太阳"></textarea>
+            </label>
+            <label class="template-field">
+              <span class="template-field-head"><span>场景 / 风格</span><small>光线、材质、氛围</small></span>
+              <textarea id="templateStyle" rows="2" placeholder="例如：日系插画，柔和逆光，暖色纸张质感"></textarea>
+            </label>
+            <label class="template-field">
+              <span class="template-field-head"><span>画面文字</span><small>每行一条 · 最多 160 字</small></span>
+              <textarea id="templateText" rows="4" maxlength="160" placeholder="可留空；每行一条，会逐字渲染"></textarea>
+            </label>
+            <div class="template-aspect-field">
+              <div class="template-field-head"><span>画幅</span><small>决定画面比例</small></div>
+              <div class="param-chips template-aspect-chips" id="templateAspectChips" role="group" aria-label="画幅">
+                <button type="button" data-aspect="">自动</button>
+                <button type="button" data-aspect="1:1">1:1</button>
+                <button type="button" data-aspect="3:4">3:4</button>
+                <button type="button" data-aspect="4:3">4:3</button>
+                <button type="button" data-aspect="9:16">9:16</button>
+                <button type="button" data-aspect="16:9">16:9</button>
+                <button type="button" data-aspect="3:2">3:2</button>
+                <button type="button" data-aspect="2:3">2:3</button>
+              </div>
+              <select id="templateAspect" hidden aria-label="画幅">
+                <option value="">自动</option>
+                <option value="1:1">1:1</option>
+                <option value="3:4">3:4</option>
+                <option value="4:3">4:3</option>
+                <option value="9:16">9:16</option>
+                <option value="16:9">16:9</option>
+                <option value="3:2">3:2</option>
+                <option value="2:3">2:3</option>
+              </select>
+            </div>
+            <div class="qr-form" id="qrForm" hidden>
+              <div class="template-section-head">
+                <span class="template-section-title">二维码<small>生成后合成</small></span>
+              </div>
+              <label class="template-field">链接
+                <input id="qrUrl" type="url" maxlength="1024" placeholder="https://example.com/benefit" />
+              </label>
+              <div class="template-row">
+                <label class="template-field">位置
+                  <select id="qrPosition">
+                    <option value="bottom-right">右下角</option>
+                    <option value="bottom-left">左下角</option>
+                    <option value="bottom-center">底部居中</option>
+                  </select>
+                </label>
+                <label class="template-field">尺寸
+                  <select id="qrSize">
+                    <option value="small">小</option>
+                    <option value="medium">中</option>
+                    <option value="large">大</option>
+                  </select>
+                </label>
+              </div>
+              <p class="section-note qr-note">二维码由代码生成并在出图后合成；新生成的二维码图片会保留无二维码底图，编辑后自动重新合成。</p>
+            </div>
+            <p class="section-note" id="templateHint">先选一个模板作为起点，或直接填写主体；再选风格灵感叠加，会覆盖风格和画幅，保留主体和文字。</p>
           </div>
         </div>
         <div class="modal-foot">
@@ -618,6 +819,7 @@
           <a class="primary" id="updateDownload" target="_blank" rel="noopener noreferrer" hidden>
             前往下载
           </a>
+          <button class="primary" id="updateInstall" type="button" hidden>下载并安装</button>
         </div>
       </div>
     </div>
@@ -625,6 +827,6 @@
     <div class="toast" id="toast" hidden></div>
     <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp" multiple hidden />
 
-    <script type="module" src="/js/app.js?v=28"></script>
+    <script type="module" src="/js/app.js?v=57"></script>
   </body>
 </html>

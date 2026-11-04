@@ -1,6 +1,6 @@
 {
   "name": "luma-image-agent",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "type": "module",
   "description": "Luma · 对话式 AI 与图片创作智能体",
@@ -17,7 +17,8 @@
   },
   "devDependencies": {
     "electron": "^45.2.1",
-    "electron-builder": "^26.18.0"
+    "electron-builder": "^26.18.0",
+    "jsqr": "^1.4.0"
   },
   "build": {
     "appId": "com.luma.imagegen",
@@ -35,6 +36,13 @@
       "public/**/*",
       "desktop/**/*",
       "package.json"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "guoxiang2023",
+        "repo": "AI-Image-Studio"
+      }
     ],
     "electronDownload": {
       "mirror": "https://npmmirror.com/mirrors/electron/"
@@ -88,6 +96,15 @@
     "dmg": {
       "title": "Luma ${version}"
     },
-    "afterPack": "desktop/after-pack.cjs"
+    "afterPack": "desktop/after-pack.cjs",
+    "asarUnpack": [
+      "node_modules/sharp/**/*",
+      "node_modules/@img/**/*"
+    ]
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11",
+    "qrcode-generator": "^2.0.4",
+    "sharp": "^0.35.5"
   }
 }

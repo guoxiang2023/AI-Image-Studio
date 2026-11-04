@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { closeDb, initDb } from '../src/data/database.js';
+import { closeDb, getDb, initDb } from '../src/data/database.js';
 import { countUsers, createUser, findUserByUsername } from '../src/data/repositories/users.js';
 import {
   getSettings,
@@ -24,12 +24,6 @@ import {
   listGalleryImages,
   setGalleryImageFavorite,
 } from '../src/data/repositories/gallery.js';
-import {
-  deleteSkill,
-  findSkill,
-  insertSkill,
-  listSkills,
-} from '../src/data/repositories/skills.js';
 
 let dataDir;
 
@@ -63,7 +57,6 @@ test('chat repository round-trips serialized documents', () => {
     messagesJson: '[]',
     summary: '',
     summaryUpto: 0,
-    skillId: null,
   };
   insertChat(document);
   assert.equal(listChats('u1')[0].id, 'c1');
@@ -74,7 +67,7 @@ test('chat repository round-trips serialized documents', () => {
   assert.equal(getChat('u1', 'c1'), undefined);
 });
 
-test('gallery and skill repositories isolate users', () => {
+test('gallery repositories isolate users', () => {
   createGalleryFolder({ id: 'f1', userId: 'u1', name: 'folder' });
   assert.equal(listGalleryFolders('u1').length, 1);
   insertGalleryImage({
@@ -86,14 +79,23 @@ test('gallery and skill repositories isolate users', () => {
     aspectRatio: '1:1',
     chatId: null,
     createdAt: 1,
+    baseId: 'b1',
+    qr: { url: 'https://example.com/benefit', position: 'bottom-right', size: 'medium' },
   });
   setGalleryImageFavorite('u1', 'i1', true);
   assert.equal(findGalleryImage('u1', 'i1').favorite, 1);
+  assert.equal(findGalleryImage('u1', 'i1').base_id, 'b1');
+  assert.equal(JSON.parse(findGalleryImage('u1', 'i1').qr_json).url, 'https://example.com/benefit');
   assert.equal(listGalleryImages('u1').length, 1);
   assert.equal(listGalleryImages('u2').length, 0);
+});
 
-  insertSkill({ id: 's1', userId: 'u1', name: 'skill', description: '', dataJson: '{}' });
-  assert.equal(listSkills('u1').length, 1);
-  assert.equal(findSkill('u1', 's1').id, 's1');
-  assert.equal(deleteSkill('u1', 's1').changes, 1);
+test('skill schema and chat column are removed', () => {
+  const db = getDb();
+  const table = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'skills'")
+    .get();
+  assert.equal(table, undefined);
+  const columns = db.prepare('PRAGMA table_info(chats)').all();
+  assert.equal(columns.some((column) => column.name === 'skill_id'), false);
 });

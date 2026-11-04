@@ -1,5 +1,10 @@
 import { getSettings, saveSettings } from '../data/repositories/model-settings.js';
-import { DEFAULT_MODELS, LLM_PROTOCOLS } from '../config.js';
+import {
+  DEFAULT_MODELS,
+  IMAGE_QUALITIES,
+  LLM_PROTOCOLS,
+  REASONING_EFFORTS,
+} from '../config.js';
 import { getSecretBox } from '../shared/runtime.js';
 import { clamp, keyHint } from '../shared/utils.js';
 
@@ -41,11 +46,19 @@ export function loadSettings(userId) {
         typeof storedLlm.temperature === 'number'
           ? storedLlm.temperature
           : DEFAULT_MODELS.llm.temperature,
+      reasoningEffort:
+        typeof storedLlm.reasoningEffort === 'string' &&
+        REASONING_EFFORTS.includes(storedLlm.reasoningEffort)
+          ? storedLlm.reasoningEffort
+          : DEFAULT_MODELS.llm.reasoningEffort,
       apiKey: storedLlm.apiKey ? secretBox.unseal(storedLlm.apiKey) : '',
     },
     image: {
       baseUrl: storedImage.baseUrl || DEFAULT_MODELS.image.baseUrl,
       model: storedImage.model || DEFAULT_MODELS.image.model,
+      quality: IMAGE_QUALITIES.includes(storedImage.quality)
+        ? storedImage.quality
+        : DEFAULT_MODELS.image.quality,
       apiKey: storedImage.apiKey ? secretBox.unseal(storedImage.apiKey) : '',
     },
   };
@@ -73,12 +86,14 @@ export function publicSettings(userId) {
       protocol: settings.llm.protocol,
       baseUrl: settings.llm.baseUrl,
       model: settings.llm.model,
+      reasoningEffort: settings.llm.reasoningEffort,
       apiKeySet: Boolean(settings.llm.apiKey),
       apiKeyHint: keyHint(settings.llm.apiKey),
     },
     image: {
       baseUrl: settings.image.baseUrl,
       model: settings.image.model,
+      quality: settings.image.quality,
       apiKeySet: Boolean(settings.image.apiKey),
       apiKeyHint: keyHint(settings.image.apiKey),
     },
@@ -98,6 +113,22 @@ export function draftSettings(body, target, userId) {
     typeof body.protocol === 'string' ? body.protocol : stored.protocol,
   );
   const apiKey = String(body.apiKey || '').trim() || stored.apiKey;
+  const requestedQuality =
+    typeof body.quality === 'string' ? body.quality.trim().toLowerCase() : null;
+  const quality =
+    requestedQuality && IMAGE_QUALITIES.includes(requestedQuality)
+      ? requestedQuality
+      : stored.quality;
+  const requestedEffort =
+    typeof body.reasoningEffort === 'string'
+      ? body.reasoningEffort.trim().toLowerCase()
+      : null;
+  const reasoningEffort =
+    requestedEffort === null
+      ? stored.reasoningEffort
+      : requestedEffort === '' || REASONING_EFFORTS.includes(requestedEffort)
+        ? requestedEffort
+        : stored.reasoningEffort;
   if (!baseUrl) return { error: '请填写接口地址' };
   let parsed;
   try {
@@ -115,6 +146,7 @@ export function draftSettings(body, target, userId) {
     apiKey,
     protocol,
     temperature: stored.temperature,
+    ...(target === 'llm' ? { reasoningEffort } : { quality }),
   };
 }
 
@@ -138,6 +170,20 @@ export function updateSettingsPatch(userId, body) {
     ) {
       settings.llm.protocol = patch.protocol;
       changed = true;
+    }
+    if (section === 'image' && typeof patch.quality === 'string') {
+      const quality = patch.quality.trim().toLowerCase();
+      if (IMAGE_QUALITIES.includes(quality)) {
+        settings.image.quality = quality;
+        changed = true;
+      }
+    }
+    if (section === 'llm' && typeof patch.reasoningEffort === 'string') {
+      const effort = patch.reasoningEffort.trim().toLowerCase();
+      if (!effort || REASONING_EFFORTS.includes(effort)) {
+        settings.llm.reasoningEffort = effort;
+        changed = true;
+      }
     }
     if (typeof patch.apiKey === 'string' && patch.apiKey.trim()) {
       settings[section].apiKey = patch.apiKey.trim();

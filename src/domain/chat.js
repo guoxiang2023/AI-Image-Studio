@@ -13,7 +13,6 @@ export function createChatDocument(userId) {
     messages: [],
     summary: '',
     summaryUpto: 0,
-    skillId: null,
   };
 }
 
@@ -30,7 +29,6 @@ export function serializeChat(chat) {
     messagesJson: JSON.stringify(chat.messages),
     summary: chat.summary || '',
     summaryUpto: chat.summaryUpto || 0,
-    skillId: chat.skillId || null,
   };
 }
 
@@ -43,7 +41,6 @@ export function chatToClient(chat) {
     lastImageId: chat.lastImageId,
     summary: chat.summary || '',
     summaryUpto: chat.summaryUpto || 0,
-    skillId: chat.skillId || null,
     messages: chat.messages.filter(
       (message) => !(message.draft && !message.content && !(message.images?.length)),
     ),

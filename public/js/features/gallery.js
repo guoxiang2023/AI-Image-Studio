@@ -51,7 +51,7 @@ function makeFolderChip(id, name, count, deletable) {
   return chip;
 }
 
-function createGalleryCard(image) {
+function createGalleryCard(image, images, index) {
   const card = el('figure', 'gallery-card');
   const thumb = el('div', 'gallery-thumb');
 
@@ -59,7 +59,7 @@ function createGalleryCard(image) {
   img.src = image.url;
   img.alt = image.prompt || '生成图片';
   img.loading = 'lazy';
-  img.addEventListener('click', () => openLightbox(image.url));
+  img.addEventListener('click', () => openLightbox(image.url, { images, index }));
   thumb.appendChild(img);
 
   const favWrap = el('div', 'gallery-fav-wrap');
@@ -201,9 +201,12 @@ export function renderGallery() {
       ? `筛选 ${images.length} / ${gallery.images.length} 张`
       : `共 ${gallery.images.length} 张`
     : '';
+  els.galleryLive.hidden = !state.streaming;
 
   els.galleryGrid.innerHTML = '';
-  for (const image of images) els.galleryGrid.appendChild(createGalleryCard(image));
+  images.forEach((image, index) => {
+    els.galleryGrid.appendChild(createGalleryCard(image, images, index));
+  });
 
   const empty = images.length === 0;
   els.galleryEmpty.hidden = !empty;
@@ -211,7 +214,10 @@ export function renderGallery() {
 
   if (empty) {
     const active = gallery.activeFolder;
-    if (query) {
+    if (state.streaming) {
+      els.galleryEmptyTitle.textContent = '正在生成…';
+      els.galleryEmptyText.textContent = '任务完成后，新图片会自动出现在这里。';
+    } else if (query) {
       els.galleryEmptyTitle.textContent = '没有匹配的图片';
       els.galleryEmptyText.textContent = '换一个提示词关键词或标签试试。';
     } else if (gallery.favoriteOnly) {
@@ -397,6 +403,7 @@ export async function openGallery() {
   els.topbarLabel.textContent = 'GALLERY';
   els.chatTitle.textContent = '我的画册';
   els.galleryNav.classList.add('active');
+  els.galleryLive.hidden = !state.streaming;
   els.gallerySearch.value = state.gallery.query;
   closeParams();
   closeSidebar();
@@ -405,7 +412,7 @@ export async function openGallery() {
 
 export function backToChat() {
   showChatView();
-  if (state.sessionId) els.input.focus();
+  if (state.sessionId || state.streaming) els.input.focus();
   else newChatView();
 }
 

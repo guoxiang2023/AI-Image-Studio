@@ -10,7 +10,7 @@ import {
   PROMPT_EDIT_SYSTEM,
   TOOLS,
 } from './prompts.js';
-import { skillSystemBlock } from '../domain/skill.js';
+import { openAiReasoning } from './reasoning.js';
 import {
   anthropicToOpenAiResponse,
   buildAnthropicRequest,
@@ -87,6 +87,7 @@ export async function chatCompletion(
           messages,
           temperature: resolvedTemperature,
           max_tokens: maxTokens,
+          ...openAiReasoning(llm),
           ...(tools ? { tools: TOOLS, tool_choice: 'auto' } : {}),
         },
       };
@@ -288,6 +289,7 @@ export async function streamChatCompletion(
           temperature: resolvedTemperature,
           max_tokens: maxTokens,
           stream: true,
+          ...openAiReasoning(llm),
           ...(tools ? { tools: TOOLS, tool_choice: 'auto' } : {}),
         },
       };
@@ -431,7 +433,7 @@ export function sanitizeDirectedPrompt(text) {
 
 export async function directImagePrompt(
   llm,
-  { userText, draft, aspectRatio, model, skill, mode = 'generate' },
+  { userText, draft, aspectRatio, model, mode = 'generate' },
   signal,
 ) {
   if (!PROMPT_OPTIMIZE || !llm?.apiKey) return draft;
@@ -451,7 +453,7 @@ export async function directImagePrompt(
       [
         {
           role: 'system',
-          content: system + skillSystemBlock(skill),
+          content: system,
         },
         { role: 'user', content: userPrompt },
       ],

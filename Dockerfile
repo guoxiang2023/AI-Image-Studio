@@ -5,7 +5,12 @@ ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=8787
 
-COPY package.json ./
+# sharp/librsvg needs a CJK font when rendering marketing templates.
+RUN apk add --no-cache font-noto-cjk
+
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
 COPY server.js ./
 COPY src ./src
 COPY public ./public

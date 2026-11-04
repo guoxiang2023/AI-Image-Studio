@@ -23,11 +23,10 @@ import {
 } from './routes/gallery.js';
 import { handleListSessions, handleSession } from './routes/sessions.js';
 import {
-  handleDeleteSkill,
-  handleGetSkill,
-  handleImportSkill,
-  handleListSkills,
-} from './routes/skills.js';
+  handleStyleGenerate,
+  handleStyleImport,
+  handleStyleReferences,
+} from './routes/studio.js';
 import { handleUpload } from './routes/upload.js';
 import { handleVersion } from './routes/version.js';
 import { serveImageFile, serveStatic } from './static.js';
@@ -69,15 +68,15 @@ function buildRouter() {
     handleSession(req, res, user, params.id),
   );
 
-  router.get('/api/skills', ({ req, res, user }) => handleListSkills(req, res, user));
-  router.post('/api/skills', ({ req, res, user }) => handleImportSkill(req, res, user));
-  router.get('/api/skills/:id', ({ req, res, user, params }) =>
-    handleGetSkill(req, res, user, params.id),
+  router.get('/api/studio/references', ({ req, res, user }) =>
+    handleStyleReferences(req, res, user),
   );
-  router.delete('/api/skills/:id', ({ req, res, user, params }) =>
-    handleDeleteSkill(req, res, user, params.id),
+  router.post('/api/studio/import', ({ req, res, user }) =>
+    handleStyleImport(req, res, user),
   );
-
+  router.post('/api/studio/generate', ({ req, res, user }) =>
+    handleStyleGenerate(req, res, user),
+  );
   router.post('/api/upload', ({ req, res, user }) => handleUpload(req, res, user));
   router.post('/api/chat', ({ req, res, user }) => handleChat(req, res, user));
   router.get('/files/:name', ({ res, user, params }) =>

@@ -3,7 +3,6 @@ import { streamChatCompletion } from '../ai/llm.js';
 import { runTool } from './tools-service.js';
 import { toLlmHistory } from '../domain/chat.js';
 import { friendlyError, parseArgs } from '../shared/utils.js';
-import { skillSystemBlock } from '../domain/skill.js';
 
 export async function runAgent(ctx) {
   const summary = String(ctx.chat.summary || '').trim();
@@ -15,10 +14,9 @@ export async function runAgent(ctx) {
     );
   }
   if (ctx.options?.quality) params.push(`质量：${ctx.options.quality}`);
-  const systemBase =
-    (summary
-      ? `${SYSTEM_PROMPT}\n\n【本会话较早内容的摘要】\n${summary}`
-      : SYSTEM_PROMPT) + skillSystemBlock(ctx.skill);
+  const systemBase = summary
+    ? `${SYSTEM_PROMPT}\n\n【本会话较早内容的摘要】\n${summary}`
+    : SYSTEM_PROMPT;
   const system = params.length
     ? `${systemBase}\n\n【本轮生成参数】\n${params.join('\n')}`
     : systemBase;

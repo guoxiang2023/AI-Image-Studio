@@ -1,5 +1,6 @@
 import { IMAGE_QUALITY } from '../config.js';
 import { requestImage } from '../ai/llm.js';
+import { openAiReasoning } from '../ai/reasoning.js';
 import {
   anthropicEndpoint,
   anthropicHeaders,
@@ -149,6 +150,7 @@ export async function testModel({ userId, body }) {
           messages: [{ role: 'user', content: '请只回复：OK' }],
           max_tokens: 16,
           temperature: 0,
+          ...openAiReasoning(cfg),
           stream: false,
         }),
       };
@@ -214,7 +216,7 @@ export async function testModel({ userId, body }) {
           prompt: 'connectivity test: a single small gray dot on a white background',
           size: '1024x1024',
           n: 1,
-          quality: IMAGE_QUALITY,
+          quality: cfg.quality || IMAGE_QUALITY,
         }),
       },
       undefined,

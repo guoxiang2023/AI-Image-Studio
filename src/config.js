@@ -31,7 +31,8 @@ export const LLM_STREAM_IDLE_TIMEOUT = Math.max(
   10,
   Number(process.env.LLM_STREAM_IDLE_TIMEOUT_SECONDS || 120),
 );
-export const IMAGE_QUALITY = ['low', 'medium', 'high', 'auto'].includes(process.env.IMAGE_QUALITY)
+export const IMAGE_QUALITIES = ['auto', 'low', 'medium', 'high', 'xhigh', 'max'];
+export const IMAGE_QUALITY = IMAGE_QUALITIES.includes(process.env.IMAGE_QUALITY)
   ? process.env.IMAGE_QUALITY
   : 'high';
 export const IMAGE_INPUT_FIDELITY = process.env.IMAGE_INPUT_FIDELITY || 'high';
@@ -61,14 +62,17 @@ export const DEFAULT_MODELS = {
     baseUrl: '',
     model: '',
     temperature: 0.7,
+    reasoningEffort: '',
   },
   image: {
     baseUrl: '',
     model: '',
+    quality: IMAGE_QUALITY,
   },
 };
 
 export const LLM_PROTOCOLS = ['openai', 'anthropic'];
+export const REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 export const MIME = {
   png: 'image/png',
@@ -83,7 +87,7 @@ export const IMAGE_EXT_BY_TYPE = {
 };
 export const VALID_SIZES = new Set(['1024x1024', '1536x1024', '1024x1536']);
 export const USERNAME_RE = /^[\p{L}\p{N}_-]{2,24}$/u;
-export const REFERENCE_ROLES = new Set(['参考', '角色', '风格', '构图', '产品']);
+export const REFERENCE_ROLES = new Set(['参考', '角色', '风格', '构图', '版式', '产品']);
 
 // Image providers expose only three canvas sizes. Ratios that do not match a
 // native canvas are expanded after generation (never cropped) so the stored

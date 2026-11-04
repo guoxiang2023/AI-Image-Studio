@@ -36,7 +36,6 @@ export function loadChatForUser(userId, id) {
     messages,
     summary: row.summary || '',
     summaryUpto: row.summary_upto || 0,
-    skillId: row.skill_id || null,
   };
 }
 

@@ -82,7 +82,7 @@ function unfilter(raw, width, height, channels) {
   return out;
 }
 
-function decodePng(buffer) {
+export function decodePng(buffer) {
   const chunks = readChunks(buffer);
   if (!chunks) return null;
   const ihdr = chunks.find((chunk) => chunk.type === 'IHDR');
@@ -134,7 +134,7 @@ function decodePng(buffer) {
   return { width, height, rgba };
 }
 
-function encodePng(width, height, rgba) {
+export function encodePng(width, height, rgba) {
   const stride = width * 4;
   const raw = Buffer.alloc((stride + 1) * height);
   for (let y = 0; y < height; y += 1) {

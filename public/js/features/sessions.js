@@ -13,7 +13,6 @@ import { renderMessages } from './messages.js';
 import { cancelStreamForNavigation } from './stream.js';
 import { clearReference } from './reference.js';
 import { closeSidebar } from './overlays.js';
-import { setSkillId } from './skills.js';
 
 export function setSessionInUrl(id) {
   if (typeof history === 'undefined' || typeof location === 'undefined') return;
@@ -86,7 +85,6 @@ export function newChatView() {
   state.messages = [];
   state.summary = '';
   state.summaryUpto = 0;
-  setSkillId(null);
   clearReference();
   setTitle('新对话');
   renderMessages();
@@ -96,6 +94,12 @@ export function newChatView() {
 }
 
 export async function openSession(id) {
+  if (state.streaming && id === state.sessionId) {
+    showChatView();
+    closeSidebar();
+    els.input.focus();
+    return;
+  }
   cancelStreamForNavigation();
   showChatView();
   try {
@@ -105,7 +109,6 @@ export async function openSession(id) {
     state.messages = session.messages || [];
     state.summary = session.summary || '';
     state.summaryUpto = session.summaryUpto || 0;
-    setSkillId(session.skillId || null);
     clearReference();
     setTitle(session.title || '对话');
     renderMessages();

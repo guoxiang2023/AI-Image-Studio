@@ -2,12 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   normalizeChatOptions,
+  normalizeQr,
   normalizeRefIds,
   normalizeRefRoles,
   normalizeTags,
 } from '../src/domain/chat-options.js';
 import { chatToClient, toLlmHistory } from '../src/domain/chat.js';
-import { normalizeSkillPayload, skillSystemBlock } from '../src/domain/skill.js';
 import { markdownToHtml } from '../public/js/core/markdown.js';
 
 test('normalizes chat options and references', () => {
@@ -21,6 +21,8 @@ test('normalizes chat options and references', () => {
     count: null,
     quality: null,
   });
+  assert.equal(normalizeChatOptions({ quality: 'xhigh' }).quality, 'xhigh');
+  assert.equal(normalizeChatOptions({ quality: 'max' }).quality, 'max');
   assert.deepEqual(
     normalizeRefIds(['a'.repeat(16), 'a'.repeat(16), 'b'.repeat(16), 'bad']),
     ['a'.repeat(16), 'b'.repeat(16)],
@@ -29,18 +31,32 @@ test('normalizes chat options and references', () => {
   assert.deepEqual(normalizeTags(' 霓虹, 霓虹, 夜景 ， 电影感 '), ['霓虹', '夜景', '电影感']);
 });
 
-test('normalizes skill payload and renders system block', () => {
-  const skill = normalizeSkillPayload({
-    name: '电影感',
-    instructions: '保持电影感',
-    constraints: ['不要文字'],
-    defaults: { aspectRatio: '2:3', count: 2, quality: 'high' },
-    extra: 'dropped',
+test('normalizes QR links and rejects unsafe schemes', () => {
+  assert.deepEqual(
+    normalizeQr({
+      url: 'https://example.com/benefit?from=poster',
+      position: 'bottom-center',
+      size: 'large',
+    }),
+    {
+      url: 'https://example.com/benefit?from=poster',
+      position: 'bottom-center',
+      size: 'large',
+    },
+  );
+  assert.deepEqual(normalizeQr('https://example.com'), {
+    url: 'https://example.com/',
+    position: 'bottom-right',
+    size: 'medium',
   });
-  assert.equal(skill.schemaVersion, 1);
-  assert.deepEqual(skill.defaults, { aspectRatio: '2:3', count: 2, quality: 'high' });
-  assert.equal(skill.extra, undefined);
-  assert.match(skillSystemBlock(skill), /不要文字/);
+  assert.equal(normalizeQr('javascript:alert(1)'), null);
+  assert.equal(normalizeQr({ url: 'ftp://example.com/file' }), null);
+  assert.equal(normalizeQr({ url: 'not a url' }), null);
+  assert.deepEqual(normalizeQr({ url: 'https://example.com', position: 'center', size: 'huge' }), {
+    url: 'https://example.com/',
+    position: 'bottom-right',
+    size: 'medium',
+  });
 });
 
 test('builds LLM history with summary cutoff and image markers', () => {

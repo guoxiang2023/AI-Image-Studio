@@ -1,4 +1,4 @@
-import { RATIO_SIZE, REFERENCE_ROLES } from '../config.js';
+import { IMAGE_QUALITIES, RATIO_SIZE, REFERENCE_ROLES } from '../config.js';
 import { clamp } from '../shared/utils.js';
 
 export function normalizeRefIds(raw) {
@@ -34,10 +34,27 @@ export function normalizeChatOptions(raw) {
       : Number(countInput);
   const count = Number.isInteger(rawCount) ? clamp(rawCount, 1, 4) : null;
   const quality =
-    typeof source.quality === 'string' && ['auto', 'low', 'medium', 'high'].includes(source.quality)
+    typeof source.quality === 'string' && IMAGE_QUALITIES.includes(source.quality)
       ? source.quality
       : null;
   return { aspectRatio, count, quality };
+}
+
+export function normalizeQr(raw) {
+  const source = typeof raw === 'string' ? { url: raw } : raw && typeof raw === 'object' ? raw : null;
+  if (!source) return null;
+  let url;
+  try {
+    url = new URL(String(source.url || '').trim());
+  } catch {
+    return null;
+  }
+  if (!['http:', 'https:'].includes(url.protocol) || url.href.length > 1024) return null;
+  const position = ['bottom-right', 'bottom-left', 'bottom-center'].includes(source.position)
+    ? source.position
+    : 'bottom-right';
+  const size = ['small', 'medium', 'large'].includes(source.size) ? source.size : 'medium';
+  return { url: url.href, position, size };
 }
 
 export function normalizeTags(raw) {

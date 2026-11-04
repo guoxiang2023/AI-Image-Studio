@@ -4,6 +4,39 @@ import { renderMarkdown } from '../core/markdown.js';
 let current = null;
 let pending = null;
 let notified = false;
+let desktopUpdate = { ready: false, busy: false, version: '' };
+
+function desktopUpdater() {
+  return typeof window !== 'undefined' ? window.lumaUpdater : null;
+}
+
+function resetDesktopUpdate(version) {
+  const nextVersion = String(version || '');
+  if (desktopUpdate.version !== nextVersion) {
+    desktopUpdate = { ready: false, busy: false, version: nextVersion };
+  }
+}
+
+function markUpdateReady(version) {
+  desktopUpdate.ready = true;
+  desktopUpdate.version = String(version || desktopUpdate.version || '');
+  els.updateInstall.textContent = '重启并安装';
+  els.updateInstall.disabled = false;
+  els.updateStatus.classList.add('is-update');
+  els.updateStatus.textContent = '更新已下载，重启后完成安装';
+  els.updateDownload.hidden = true;
+}
+
+function showDesktopUpdateError(message) {
+  desktopUpdate.ready = false;
+  els.updateStatus.classList.remove('is-update');
+  els.updateStatus.textContent = '自动更新失败';
+  els.updateError.hidden = false;
+  els.updateError.textContent = `自动更新失败：${message}`;
+  els.updateInstall.textContent = '重试更新';
+  els.updateInstall.disabled = false;
+  els.updateDownload.hidden = false;
+}
 
 function formatSize(bytes) {
   const value = Number(bytes) || 0;
@@ -61,13 +94,76 @@ export function renderUpdate(info) {
   els.updateError.textContent = data.error ? `检查失败：${data.error}` : '';
 
   const canDownload = hasUpdate && Boolean(data.releaseUrl);
+  const canAutoUpdate = hasUpdate && Boolean(desktopUpdater());
+  if (canAutoUpdate) resetDesktopUpdate(data.latestVersion);
   els.updateDownload.hidden = !canDownload;
   if (canDownload) els.updateDownload.href = data.releaseUrl;
+  els.updateInstall.hidden = !canAutoUpdate;
+  if (canAutoUpdate) {
+    els.updateInstall.disabled = desktopUpdate.busy;
+    els.updateInstall.textContent = desktopUpdate.busy
+      ? '下载中…'
+      : desktopUpdate.ready
+        ? '重启并安装'
+        : '下载并安装';
+    if (desktopUpdate.ready) {
+      els.updateStatus.classList.add('is-update');
+      els.updateStatus.textContent = '更新已下载，重启后完成安装';
+      els.updateDownload.hidden = true;
+    }
+  }
 
   const notes = hasUpdate ? String(data.notes || '').trim() : '';
   renderMarkdown(els.updateNotes, notes);
   els.updateNotesWrap.hidden = !notes;
   renderAssets(hasUpdate ? data.assets : []);
+}
+
+export async function startDesktopUpdate() {
+  const updater = desktopUpdater();
+  if (!updater) return;
+
+  if (desktopUpdate.ready) {
+    els.updateInstall.disabled = true;
+    els.updateInstall.textContent = '正在重启…';
+    const result = await updater.install();
+    if (result?.error) showDesktopUpdateError(result.error);
+    return;
+  }
+
+  if (desktopUpdate.busy) return;
+  desktopUpdate.busy = true;
+  els.updateInstall.disabled = true;
+  els.updateInstall.textContent = '准备中…';
+  els.updateStatus.classList.add('is-update');
+  els.updateStatus.textContent = '正在准备下载更新…';
+  els.updateError.hidden = true;
+  els.updateError.textContent = '';
+
+  const unsubscribe = updater.onStatus?.((status) => {
+    if (!status) return;
+    if (status.type === 'progress') {
+      const percent = Math.max(0, Math.min(100, Math.round(status.percent || 0)));
+      els.updateStatus.textContent = `正在下载更新 ${percent}%`;
+      els.updateInstall.textContent = `下载中 ${percent}%`;
+    } else if (status.type === 'downloaded') {
+      markUpdateReady(status.version);
+    } else if (status.type === 'error') {
+      showDesktopUpdateError(status.message || '下载更新失败');
+    }
+  });
+
+  try {
+    const result = await updater.download();
+    if (result?.error) throw new Error(result.error);
+    markUpdateReady(result?.version || current?.latestVersion);
+  } catch (error) {
+    showDesktopUpdateError(error?.message || '下载更新失败');
+  } finally {
+    desktopUpdate.busy = false;
+    els.updateInstall.disabled = false;
+    unsubscribe?.();
+  }
 }
 
 export function openUpdateModal() {

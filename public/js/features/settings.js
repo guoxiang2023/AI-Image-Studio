@@ -78,6 +78,9 @@ function modelDraft(target) {
     ...(isLlm ? { protocol: els.llmProtocol.value } : {}),
     baseUrl: (isLlm ? els.llmBase : els.imageBase).value.trim(),
     model: currentModel(target),
+    ...(isLlm
+      ? { reasoningEffort: els.llmReasoningEffort.value }
+      : { quality: els.imageQuality.value }),
     apiKey: (isLlm ? els.llmKey : els.imageKey).value.trim(),
   };
 }
@@ -90,6 +93,7 @@ export function openSettings() {
   els.llmBase.value = cfg.llm.baseUrl || '';
   els.llmProtocol.value = cfg.llm.protocol === 'anthropic' ? 'anthropic' : 'openai';
   els.llmModel.value = cfg.llm.model || '';
+  els.llmReasoningEffort.value = cfg.llm.reasoningEffort || '';
   els.llmKey.value = '';
   setKeyVisibility('llm', false);
   els.llmKey.placeholder = cfg.llm.apiKeySet
@@ -97,6 +101,7 @@ export function openSettings() {
     : '请输入 API Key';
   els.imageBase.value = cfg.image.baseUrl || '';
   els.imageModel.value = cfg.image.model || '';
+  els.imageQuality.value = cfg.image.quality || 'high';
   els.imageKey.value = '';
   setKeyVisibility('image', false);
   els.imageKey.placeholder = cfg.image.apiKeySet
@@ -203,10 +208,12 @@ export async function saveSettings() {
       protocol: els.llmProtocol.value,
       baseUrl: els.llmBase.value.trim(),
       model: currentModel('llm'),
+      reasoningEffort: els.llmReasoningEffort.value,
     },
     image: {
       baseUrl: els.imageBase.value.trim(),
       model: currentModel('image'),
+      quality: els.imageQuality.value,
     },
   };
   if (els.llmKey.value.trim()) payload.llm.apiKey = els.llmKey.value.trim();

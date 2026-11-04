@@ -42,6 +42,7 @@ src/
     responses.js                  # JSON、请求体、安全头
     static.js                     # Web 静态资源和图片文件
     routes/                       # 只做 HTTP 适配
+      marketing.js                # 运营物料模板/预览/生成
   auth/
     crypto.js                     # scrypt、Token、SecretBox
     session-service.js            # Session 签发、Cookie、当前用户
@@ -54,22 +55,28 @@ src/
     summary-service.js            # 会话摘要压缩
     model-settings-service.js     # 模型配置读取/加密/脱敏
     model-probe-service.js        # 模型列表和连通性测试
+    marketing-service.js           # 运营物料预览、渲染、画册登记
     gallery-service.js            # 画册用例
     image-service.js              # 生成图片登记
-    skill-service.js              # Skill CRUD
   data/
     database.js                   # 连接、Schema、迁移、回填
     repositories/                 # 按聚合拆分的 SQL
   domain/
     chat.js                       # 会话文档、LLM 历史、客户端视图
     chat-options.js               # 画幅/数量/参考图/标签校验
-    skill.js                      # Skill 规范化和系统提示词
+    image-capabilities.js         # 图片模型能力与安全回退
+    image-references.js           # 参考图角色、风格隔离与重绘规则
+  marketing/
+    templates.js                  # 物料模板注册表、字段校验、主题
+    render.js                     # SVG 版式渲染、图片槽位、二维码
   ai/
     llm.js                        # Chat/Image 请求与提示词优化
+    reasoning.js                  # 推理等级规范化与接口字段映射
     prompts.js                    # 系统提示词和工具 Schema
   media/
     image-storage.js              # 文件路径、读写、尺寸探测
     png.js                        # PNG 编码/解码/比例填充
+    qr.js                         # 链接二维码生成与像素合成
   shared/
     errors.js                     # AppError 与 HTTP 语义错误
     utils.js                      # 通用工具
@@ -102,7 +109,7 @@ req
 ```text
 POST /api/chat
   -> chat-turn-service.prepareChatTurn
-       校验消息/模型配置/Skill/参考图/生成参数
+       校验消息/模型配置/参考图/生成参数
        加载或创建会话
   -> route 建立 SSE、AbortController、心跳
   -> chat-turn-service.runPreparedTurn
@@ -159,4 +166,4 @@ app.js
 
 - `test/domain.test.js`：纯校验、序列化、提示词片段。
 - `test/data.test.js`：Repository 的 CRUD、用户隔离、持久化字段。
-- 端到端：启动服务 + mock 模型，验证注册、配置、生成、画册、Skill、会话删除和桌面端加载。
+- 端到端：启动服务 + mock 模型，验证注册、配置、生成、画册、会话删除和桌面端加载。

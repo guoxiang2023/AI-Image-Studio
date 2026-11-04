@@ -26,13 +26,15 @@ export function insertGalleryImage({
   model,
   quality,
   caption,
+  baseId,
+  qr,
 }) {
   getDb()
     .prepare(
       `INSERT OR IGNORE INTO gallery_images
         (id, user_id, ext, prompt, size, aspect_ratio, chat_id, folder_id, created_at,
-         group_id, parent_id, model, quality, caption)
-       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)`,
+         group_id, parent_id, model, quality, caption, base_id, qr_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -48,6 +50,8 @@ export function insertGalleryImage({
       model || null,
       quality || null,
       caption || '',
+      baseId || null,
+      qr ? JSON.stringify(qr) : '',
     );
 }
 

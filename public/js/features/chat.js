@@ -11,6 +11,7 @@ import { createAssistantShell, createUserMessage, prependSummaryNote } from './m
 import { clearReference } from './reference.js';
 import { markActiveSession, refreshSessions, setSessionInUrl } from './sessions.js';
 import { abortStream } from './stream.js';
+import { refreshGallery } from './gallery.js';
 
 export async function send() {
   if (state.streaming) {
@@ -85,6 +86,7 @@ export async function send() {
       };
       assistantMessage.images.push(image);
       shell.addImage(image);
+      if (state.view === 'gallery') void refreshGallery();
     } else if (event.type === 'text') {
       assistantMessage.content = event.text;
       shell.setText(event.text);
@@ -108,7 +110,7 @@ export async function send() {
       body: JSON.stringify({
         sessionId,
         message: text,
-        skillId: state.skillId || null,
+        ...(state.qr ? { qr: state.qr } : {}),
         ...(references.length
           ? {
               referenceImageIds: references.map((ref) => ref.id),
@@ -151,6 +153,7 @@ export async function send() {
       await refreshSessions();
       markActiveSession();
     }
+    if (state.view === 'gallery') await refreshGallery();
     scrollBottom();
   }
 }

@@ -75,5 +75,50 @@ test('defaults settings without a protocol to OpenAI-compatible', () => {
 
   const settings = loadSettings('u2');
   assert.equal(settings.llm.protocol, 'openai');
+  assert.equal(settings.image.quality, 'high');
   assert.equal(publicSettings('u2').llm.protocol, 'openai');
+});
+
+test('persists and clears the LLM reasoning effort', () => {
+  const saved = updateSettingsPatch('u3', {
+    llm: {
+      baseUrl: 'https://api.example.com/v1',
+      model: 'reasoning-test',
+      apiKey: 'reasoning-key',
+      reasoningEffort: 'xhigh',
+    },
+  });
+  assert.equal(saved.llm.reasoningEffort, 'xhigh');
+  assert.equal(loadSettings('u3').llm.reasoningEffort, 'xhigh');
+  assert.equal(draftSettings({}, 'llm', 'u3').reasoningEffort, 'xhigh');
+  assert.equal(
+    draftSettings({ reasoningEffort: 'max' }, 'llm', 'u3').reasoningEffort,
+    'max',
+  );
+  assert.equal(
+    draftSettings({ reasoningEffort: 'ultra' }, 'llm', 'u3').reasoningEffort,
+    'xhigh',
+  );
+
+  updateSettingsPatch('u3', { llm: { reasoningEffort: '' } });
+  assert.equal(publicSettings('u3').llm.reasoningEffort, '');
+});
+
+test('persists image quality and uses it as the request default', () => {
+  const saved = updateSettingsPatch('u4', {
+    image: {
+      baseUrl: 'https://api.example.com/v1',
+      model: 'image-quality-test',
+      apiKey: 'image-key',
+      quality: 'xhigh',
+    },
+  });
+  assert.equal(saved.image.quality, 'xhigh');
+  assert.equal(loadSettings('u4').image.quality, 'xhigh');
+  assert.equal(draftSettings({}, 'image', 'u4').quality, 'xhigh');
+  assert.equal(draftSettings({ quality: 'max' }, 'image', 'u4').quality, 'max');
+  assert.equal(draftSettings({ quality: 'ultra' }, 'image', 'u4').quality, 'xhigh');
+
+  updateSettingsPatch('u4', { image: { quality: 'low' } });
+  assert.equal(publicSettings('u4').image.quality, 'low');
 });

@@ -7,12 +7,15 @@
 - 自然对话、流式回复与 Markdown 渲染
 - 流式回复中断或刷新页面后保留已生成的部分内容
 - 多轮图片生成与基于参考图的修改
+- 风格参考图生成：风格图只影响画风，不污染主体、构图和文字
 - 提示词自动优化、会话摘要、上下文压缩
 - 版本检查更新、发布说明与安装包下载入口
-- 每个账号独立配置 LLM / 图片模型；对话模型支持 OpenAI 兼容与 Anthropic Messages 接口
+- 每个账号独立配置 LLM / 图片模型；对话模型支持 OpenAI 兼容与 Anthropic Messages 接口，并可设置 low / medium / high / xhigh / max 推理等级；图片模型支持 auto / low / medium / high / xhigh / max 质量等级及默认值
 - 模型 API Key 支持显示 / 隐藏
 - 图片画册、文件夹、标签、收藏、对比
-- Skill 导入：把风格、约束和默认参数封装成可复用配置
+- 风格灵感库：16 个带本地预览图的精选风格预设，附来源署名；预览仅供参考，套用会覆盖风格与画幅并保留主体和文字，可叠加在模板上
+- AI 风格生成：内置 10 张运营参考图库（Banner、海报、弹窗、封面、信息流、启动页），也可上传自己的参考图；默认保留参考版式与视觉语言，替换主标题、卖点、按钮、规则和二维码，并提供「画面主体」输入框，默认替换参考图中的商品、饮料、人物等主体，避免只换文案不换主体
+- AI 生成结果保留模型原图比例；平台要求固定像素时，可下载后等比缩放，避免直接裁切破坏文案
 - Web / Docker / macOS / Windows 桌面端
 
 ## 快速开始
@@ -69,6 +72,7 @@ src/
   data/            SQLite 连接、Schema、Repository
   domain/          纯业务模型与校验
   ai/              LLM 客户端与提示词
+  studio/          内置 AI 参考图库
   media/           图片文件存储、PNG 处理
   shared/          通用工具、错误、限流、Cookie
 public/js/
@@ -110,3 +114,7 @@ npm test
 | `GITHUB_TOKEN` | 空 | 可选；GitHub API 限流时提高额度 |
 
 完整配置见 `src/config.js` 和 `compose.yaml`。
+
+## 风格预览署名
+
+风格灵感库中的前 12 个插画/平面/国风/实验类预览图和风格特征参考自 [handraw-style](https://github.com/yang0/handraw-style)（作者 yang0，MIT with attribution）。另外 4 个产品、生活方式、人像和时装摄影预览由 Luma 使用配置的图片模型生成，风格描述由 Luma 编写；原始项目许可见 `public/assets/presets/LICENSE-handraw-style.txt`。

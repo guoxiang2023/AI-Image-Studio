@@ -16,6 +16,8 @@ export function recordGalleryImage(ctx, img, prompt, size, aspectRatio, meta = {
       model: meta.model || null,
       quality: meta.quality || null,
       caption: meta.caption || '',
+      baseId: meta.baseId || null,
+      qr: meta.qr || null,
     });
   } catch (err) {
     console.warn('画册登记失败:', err.message);

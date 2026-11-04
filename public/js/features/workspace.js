@@ -12,8 +12,8 @@ import {
 import { newChatView, openSession, refreshSessions } from './sessions.js';
 import { renderParams } from './params.js';
 import { clearReference } from './reference.js';
-import { loadSkills, updateSkillChip } from './skills.js';
 import { checkForUpdates } from './updates.js';
+import { resetStudio } from './studio.js';
 
 export async function enterApp(user) {
   state.user = user;
@@ -36,8 +36,18 @@ export async function initWorkspace() {
   state.gallery = { images: [], folders: [], activeFolder: 'all', query: '', favoriteOnly: false };
   state.options = { aspectRatio: null, count: null, quality: null };
   state.templateId = null;
-  state.skills = [];
-  state.skillId = null;
+  state.presetId = null;
+  state.qr = null;
+  resetStudio();
+  if (els.templateSubject) els.templateSubject.value = '';
+  if (els.templateStyle) els.templateStyle.value = '';
+  if (els.templateText) els.templateText.value = '';
+  if (els.templateAspect) els.templateAspect.value = '';
+  if (els.qrUrl) els.qrUrl.value = '';
+  if (els.qrPosition) els.qrPosition.value = 'bottom-right';
+  if (els.qrSize) els.qrSize.value = 'medium';
+  if (els.qrForm) els.qrForm.hidden = true;
+  if (els.qrChip) els.qrChip.hidden = true;
   if (els.gallerySearch) els.gallerySearch.value = '';
   if (els.galleryFavFilter) els.galleryFavFilter.classList.remove('active');
   renderParams();
@@ -53,7 +63,6 @@ export async function initWorkspace() {
   }
   renderModels();
 
-  await loadSkills();
   await refreshSessions();
   const requestedSession = new URLSearchParams(location.search).get('session');
   const restoreSession =
@@ -79,11 +88,12 @@ export function resetWorkspace() {
   state.sessions = [];
   state.sessionId = null;
   state.messages = [];
-  state.skills = [];
-  state.skillId = null;
   state.options = { aspectRatio: null, count: null, quality: null };
+  state.qr = null;
+  resetStudio();
+  if (els.qrChip) els.qrChip.hidden = true;
+  if (els.qrForm) els.qrForm.hidden = true;
   renderParams();
-  updateSkillChip();
   clearReference();
   els.messages.innerHTML = '';
 }

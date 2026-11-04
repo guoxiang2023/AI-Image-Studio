@@ -1,7 +1,7 @@
 import { els, state, toast } from '../core/index.js';
 
 const MAX_REFERENCES = 4;
-const REFERENCE_ROLE_OPTIONS = ['参考', '角色', '风格', '构图', '产品'];
+const REFERENCE_ROLE_OPTIONS = ['参考', '角色', '风格', '构图', '版式', '产品'];
 
 function updateReferencePlaceholder() {
   els.input.placeholder = state.references.length

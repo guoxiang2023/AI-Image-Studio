@@ -1,4 +1,5 @@
 import { extractError } from '../shared/utils.js';
+import { anthropicReasoning } from './reasoning.js';
 
 export const ANTHROPIC_VERSION = '2023-06-01';
 
@@ -168,6 +169,7 @@ export function buildAnthropicRequest(
     body.temperature = Math.min(1, Math.max(0, temperature));
   }
   if (stream) body.stream = true;
+  Object.assign(body, anthropicReasoning(llm));
   if (tools) {
     const anthropicTools = toAnthropicTools(tools);
     if (anthropicTools.length) {

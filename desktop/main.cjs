@@ -1,4 +1,14 @@
-const { app, BrowserWindow, Menu, dialog, session, shell } = require('electron');
+const {
+  app,
+  BrowserWindow,
+  Menu,
+  dialog,
+  ipcMain,
+  session,
+  shell,
+} = require('electron');
+const { autoUpdater } = require('electron-updater');
+const { canDownloadUpdate } = require('./updater-utils.cjs');
 const path = require('node:path');
 
 const APP_NAME = 'Luma';
@@ -6,6 +16,7 @@ const APP_ID = 'com.luma.imagegen';
 let runtime = null;
 let mainWindow = null;
 let quitting = false;
+let updateDownloaded = false;
 
 app.setName(APP_NAME);
 // Full rename: use a fresh userData directory. Legacy 画境 data is left untouched.
@@ -38,6 +49,7 @@ async function start() {
   runtime = await startServer({ host: '127.0.0.1', port: 0 });
   setupDownloads();
   installMenu();
+  setupUpdater();
   createWindow();
 
   app.on('activate', () => {
@@ -66,6 +78,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      preload: path.join(__dirname, 'preload.cjs'),
       devTools: true,
     },
   });
@@ -91,6 +104,61 @@ function createWindow() {
     }
     event.preventDefault();
     if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+  });
+}
+
+function sendUpdaterStatus(status) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('updater:status', status);
+}
+
+function setupUpdater() {
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on('download-progress', (progress) => {
+    sendUpdaterStatus({
+      type: 'progress',
+      percent: Number(progress?.percent) || 0,
+      transferred: Number(progress?.transferred) || 0,
+      total: Number(progress?.total) || 0,
+    });
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    updateDownloaded = true;
+    sendUpdaterStatus({ type: 'downloaded', version: info?.version || '' });
+  });
+
+  autoUpdater.on('error', (error) => {
+    sendUpdaterStatus({ type: 'error', message: error?.message || '自动更新失败' });
+  });
+
+  ipcMain.handle('updater:download', async () => {
+    if (!app.isPackaged) {
+      return { error: '自动更新仅支持安装包版本' };
+    }
+    try {
+      updateDownloaded = false;
+      const result = await autoUpdater.checkForUpdates();
+      if (!canDownloadUpdate(result)) return { error: '没有可用更新' };
+      await autoUpdater.downloadUpdate();
+      updateDownloaded = true;
+      return { ok: true, version: result.updateInfo.version };
+    } catch (error) {
+      return { error: error?.message || '下载更新失败' };
+    }
+  });
+
+  ipcMain.handle('updater:install', () => {
+    if (!app.isPackaged) {
+      return { error: '自动更新仅支持安装包版本' };
+    }
+    if (!updateDownloaded) {
+      return { error: '更新尚未下载完成' };
+    }
+    setImmediate(() => autoUpdater.quitAndInstall(false, true));
+    return { ok: true };
   });
 }
 

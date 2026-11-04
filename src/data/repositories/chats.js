@@ -16,8 +16,8 @@ export function getChat(userId, id) {
 export function insertChat(chat) {
   getDb()
     .prepare(
-      `INSERT INTO chats (id, user_id, title, created_at, updated_at, last_image_id, cover_url, messages_json, summary, summary_upto, skill_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO chats (id, user_id, title, created_at, updated_at, last_image_id, cover_url, messages_json, summary, summary_upto)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       chat.id,
@@ -30,14 +30,13 @@ export function insertChat(chat) {
       chat.messagesJson,
       chat.summary || '',
       chat.summaryUpto || 0,
-      chat.skillId || null,
     );
 }
 
 export function updateChat(chat) {
   getDb()
     .prepare(
-      `UPDATE chats SET title = ?, updated_at = ?, last_image_id = ?, cover_url = ?, messages_json = ?, summary = ?, summary_upto = ?, skill_id = ?
+      `UPDATE chats SET title = ?, updated_at = ?, last_image_id = ?, cover_url = ?, messages_json = ?, summary = ?, summary_upto = ?
        WHERE id = ? AND user_id = ?`,
     )
     .run(
@@ -48,7 +47,6 @@ export function updateChat(chat) {
       chat.messagesJson,
       chat.summary || '',
       chat.summaryUpto || 0,
-      chat.skillId || null,
       chat.id,
       chat.userId,
     );

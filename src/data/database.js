@@ -32,18 +32,6 @@ export function initDb(dataDir) {
       updated_at INTEGER NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS skills (
-      id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL,
-      name TEXT NOT NULL COLLATE NOCASE,
-      description TEXT NOT NULL DEFAULT '',
-      data_json TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_user_name ON skills(user_id, name);
-    CREATE INDEX IF NOT EXISTS idx_skills_user_updated ON skills(user_id, updated_at DESC);
-
     CREATE TABLE IF NOT EXISTS chats (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -54,8 +42,7 @@ export function initDb(dataDir) {
       cover_url TEXT,
       messages_json TEXT NOT NULL,
       summary TEXT NOT NULL DEFAULT '',
-      summary_upto INTEGER NOT NULL DEFAULT 0,
-      skill_id TEXT
+      summary_upto INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS idx_chats_user_updated ON chats(user_id, updated_at DESC);
 
@@ -88,9 +75,10 @@ export function initDb(dataDir) {
   if (!columns.has('summary_upto')) {
     db.exec('ALTER TABLE chats ADD COLUMN summary_upto INTEGER NOT NULL DEFAULT 0');
   }
-  if (!columns.has('skill_id')) {
-    db.exec('ALTER TABLE chats ADD COLUMN skill_id TEXT');
+  if (columns.has('skill_id')) {
+    db.exec('ALTER TABLE chats DROP COLUMN skill_id');
   }
+  db.exec('DROP TABLE IF EXISTS skills');
 
   const galleryColumns = new Set(
     db.prepare('PRAGMA table_info(gallery_images)').all().map((row) => row.name),
@@ -104,6 +92,8 @@ export function initDb(dataDir) {
     tags_json: "TEXT NOT NULL DEFAULT '[]'",
     favorite: 'INTEGER NOT NULL DEFAULT 0',
     hidden: 'INTEGER NOT NULL DEFAULT 0',
+    base_id: 'TEXT',
+    qr_json: "TEXT NOT NULL DEFAULT ''",
   };
   for (const [name, ddl] of Object.entries(galleryAdditions)) {
     if (!galleryColumns.has(name)) {

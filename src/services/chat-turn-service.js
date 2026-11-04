@@ -1,6 +1,7 @@
 import { findImageFile } from '../media/image-storage.js';
 import {
   normalizeChatOptions,
+  normalizeQr,
   normalizeRefIds,
   normalizeRefRoles,
 } from '../domain/chat-options.js';
@@ -14,7 +15,6 @@ import {
   updateSummary,
 } from './chat-service.js';
 import { loadSettings } from './model-settings-service.js';
-import { getSkillForUser } from './skill-service.js';
 import { maybeCompressChat } from './summary-service.js';
 
 export async function prepareChatTurn(user, body) {
@@ -26,22 +26,9 @@ export async function prepareChatTurn(user, body) {
     throw new AppError(400, '请先在「模型设置」中配置对话模型 API Key');
   }
 
-  const hasSkillField = Object.prototype.hasOwnProperty.call(body, 'skillId');
-  const requestedSkillId = hasSkillField ? String(body.skillId || '').trim() : '';
-  let skill = requestedSkillId ? getSkillForUser(user.id, requestedSkillId) : null;
-  if (requestedSkillId && !skill) {
-    throw new AppError(404, 'Skill 不存在或已删除');
-  }
-
   let chat = body.sessionId ? loadChatForUser(user.id, body.sessionId) : null;
   const isNew = !chat;
   if (!chat) chat = newChatForUser(user.id);
-  if (hasSkillField) {
-    chat.skillId = skill?.id || null;
-  } else if (chat.skillId) {
-    skill = getSkillForUser(user.id, chat.skillId);
-    if (!skill) chat.skillId = null;
-  }
   if (!chat.title) chat.title = message.slice(0, 30);
 
   const refIds = normalizeRefIds(
@@ -49,11 +36,7 @@ export async function prepareChatTurn(user, body) {
   );
   const refRoles = normalizeRefRoles(body.referenceRoles, refIds.length);
   const options = normalizeChatOptions(body.options);
-  if (skill?.defaults) {
-    options.aspectRatio ||= skill.defaults.aspectRatio || null;
-    options.count ||= skill.defaults.count || null;
-    options.quality ||= skill.defaults.quality || null;
-  }
+  options.qr = normalizeQr(body.qr);
 
   const references = [];
   for (let index = 0; index < refIds.length; index += 1) {
@@ -67,7 +50,6 @@ export async function prepareChatTurn(user, body) {
     message,
     models,
     chat,
-    skill,
     isNew,
     references,
     options,
@@ -76,7 +58,7 @@ export async function prepareChatTurn(user, body) {
 }
 
 export async function runPreparedTurn({ user, prepared, emit, signal }) {
-  const { message, models, chat, skill, isNew, references, options, turnId } = prepared;
+  const { message, models, chat, isNew, references, options, turnId } = prepared;
 
   emit({ type: 'session', sessionId: chat.id, title: chat.title });
 
@@ -145,9 +127,9 @@ export async function runPreparedTurn({ user, prepared, emit, signal }) {
       user,
       chat,
       models,
-      skill,
       refId: references[0]?.id || null,
       refIds: references.map((ref) => ref.id),
+      references,
       options,
       turnId,
       countBudget: options.count || null,
