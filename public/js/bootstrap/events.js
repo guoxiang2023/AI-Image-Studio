@@ -66,7 +66,6 @@ import {
   checkForUpdates,
   closeUpdateModal,
   openUpdateModal,
-  startDesktopUpdate,
 } from '../features/updates.js';
 import {
   closeLightbox,
@@ -269,7 +268,6 @@ export function bindEvents() {
   els.recheckUpdate.addEventListener('click', () =>
     checkForUpdates({ force: true, showModal: true, notify: true }),
   );
-  els.updateInstall.addEventListener('click', startDesktopUpdate);
   els.updateModal.addEventListener('click', (event) => {
     if (event.target === els.updateModal) closeUpdateModal();
   });

@@ -30,7 +30,6 @@ export const els = {
   cancelUpdate: $('#cancelUpdate'),
   recheckUpdate: $('#recheckUpdate'),
   updateDownload: $('#updateDownload'),
-  updateInstall: $('#updateInstall'),
   updateStatus: $('#updateStatus'),
   updateCurrent: $('#updateCurrent'),
   updateLatest: $('#updateLatest'),

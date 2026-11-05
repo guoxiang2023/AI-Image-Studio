@@ -117,45 +117,31 @@ jobs:
             }
       - uses: softprops/action-gh-release@v2
         with:
-          name: Luma v1.0.4
+          name: Luma v1.0.5
           body: |
-            ## Luma v1.0.4
+            ## Luma v1.0.5
 
-            对话式 AI 助手，支持自然对话与图片生成。
+            ### 修复
 
-            ### 本版新增
+            - 修复桌面端点击更新时提示 `Cannot find latest-mac.yml (404)`：桌面端不再调用 `autoUpdater`，不会请求自动更新元数据
+            - 更新弹窗改为读取最新 GitHub Release，直接列出 macOS / Windows 安装包；下载后覆盖安装即可完成更新
+            - 移除 `electron-updater` 依赖和多余的预加载脚本，减小安装包体积
+            - 覆盖安装不会清除账号、模型配置、会话和画册数据
 
-            - 多供应商管理：对话模型和图片模型均可配置多个供应商，独立保存接口地址、模型、Key、推理等级 / 图片质量与价格，通过顶部模型菜单或设置页「设为当前」一键切换
-            - 用量与费用统计：全部时间总览、近 7 天趋势，以及会话、供应商、模型三个维度的 Token、请求、图片与费用明细
-            - 缓存命中统计：展示缓存 Token 与缓存命中率；按「供应商 + 模型」分别配置输入、缓存命中和输出单价，历史用量按当前单价重新估算
-            - 上下文管理：按 token 预算自动压缩上下文，并新增手动「压缩」按钮，保留长期记忆
-            - 兼容 OpenAI 式缓存 usage 与 Anthropic `cache_read_input_tokens`，缓存 Token 单独计价
+            ### 更新方式
 
-            ### 改进
-
-            - 设置页供应商表单重构，支持新增、删除、设为当前；每个供应商独立保存配置与 Key
-            - 同一供应商下的不同模型可使用不同价格，费用统计更准确
-            - 供应商未返回 usage 时继续按消息长度估算，并在统计中标注
-            - 图片与对话供应商切换后，当前会话保持可用
-
-            ### 基础能力
-
-            - 普通对话流式输出，回复逐字显示
-            - 支持安全 Markdown 渲染：标题、列表、粗体、代码块和链接
-            - 优化意图判断：普通问答直接回答，不再强行引向出图
-            - 图片生成与修改支持流式状态和工具调用
-            - 网络异常、超时和 5xx 自动重试（最多 5 次），失败统一提示
-            - 支持 OpenAI / Anthropic 兼容协议，并可在设置中读取模型列表
-            - 图片画册、文件夹、标签、收藏、对比，以及会话归档
-            - Release 仅提供安装包，不包含自动更新元数据或 blockmap；更新请下载新安装包覆盖安装
+            1. 打开「版本更新」，选择对应平台的安装包下载
+            2. macOS：打开 DMG，将「Luma」拖入 Applications，覆盖旧版本
+            3. Windows：运行 EXE 安装包，按提示覆盖安装
+            4. Release 仅提供安装包，不包含自动更新元数据或 blockmap
 
             ### 下载
 
             | 平台 | 安装包 |
             | --- | --- |
-            | macOS Apple Silicon（M 系列） | `Luma-1.0.4-mac-arm64.dmg` |
-            | macOS Intel | `Luma-1.0.4-mac-x64.dmg` |
-            | Windows x64 | `Luma-1.0.4-win-x64.exe` |
+            | macOS Apple Silicon（M 系列） | `Luma-1.0.5-mac-arm64.dmg` |
+            | macOS Intel | `Luma-1.0.5-mac-x64.dmg` |
+            | Windows x64 | `Luma-1.0.5-win-x64.exe` |
 
             ### 安装说明
 

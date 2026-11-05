@@ -1,6 +1,6 @@
 {
   "name": "luma-image-agent",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "type": "module",
   "description": "Luma · 对话式 AI 与图片创作智能体",
@@ -77,7 +77,6 @@
     ]
   },
   "dependencies": {
-    "electron-updater": "^6.8.11",
     "qrcode-generator": "^2.0.4",
     "sharp": "^0.35.5"
   }
