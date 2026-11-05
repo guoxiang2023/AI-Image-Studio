@@ -16,6 +16,7 @@ import {
   sizeFromDimensions,
 } from '../media/image-storage.js';
 import { recordGalleryImage } from './image-service.js';
+import { recordImageUsage, recordLlmUsage } from './usage-service.js';
 import { directImagePrompt, requestImage } from '../ai/llm.js';
 import { inferAspectRatio } from '../media/png.js';
 import { addQrToPng } from '../media/qr.js';
@@ -35,6 +36,19 @@ async function optimizePrompt(ctx, draft, { aspectRatio, model, mode }) {
       aspectRatio,
       model,
       mode,
+      onUsage: (response, messages) =>
+        recordLlmUsage({
+          userId: ctx.user?.id,
+          chatId: ctx.chat?.id,
+          turnId: ctx.turnId,
+          kind: 'prompt',
+          model: ctx.models.llm.model,
+          providerId: ctx.models.llm.providerId,
+          providerName: ctx.models.llm.providerName,
+          usage: response?.usage,
+          messages,
+          completionText: response?.choices?.[0]?.message?.content,
+        }),
     },
     ctx.signal,
   );
@@ -196,7 +210,7 @@ async function generateImages(args, ctx) {
       { model, prompt: finalPrompt, size, count, quality },
       files,
     );
-    data = await requestImage(
+    const result = await requestImage(
       ctx.models.image,
       '/images/edits',
       {
@@ -206,8 +220,9 @@ async function generateImages(args, ctx) {
       },
       ctx.signal,
     );
+    data = result.data;
   } else {
-    data = await requestImage(
+    const result = await requestImage(
       ctx.models.image,
       '/images/generations',
       {
@@ -226,7 +241,17 @@ async function generateImages(args, ctx) {
       },
       ctx.signal,
     );
+    data = result.data;
   }
+  recordImageUsage({
+    userId: ctx.user?.id,
+    chatId: ctx.chat?.id,
+    turnId: ctx.turnId,
+    model,
+    providerId: ctx.models.image.providerId,
+    providerName: ctx.models.image.providerName,
+    images: data.length,
+  });
 
   const saved = await saveImageResults(ctx, data, {
     aspectRatio,
@@ -305,7 +330,7 @@ async function editImage(args, ctx) {
     { model, prompt: finalPrompt, size, count, quality },
     files,
   );
-  const data = await requestImage(
+  const result = await requestImage(
     ctx.models.image,
     '/images/edits',
     {
@@ -315,6 +340,16 @@ async function editImage(args, ctx) {
     },
     ctx.signal,
   );
+  const data = result.data;
+  recordImageUsage({
+    userId: ctx.user?.id,
+    chatId: ctx.chat?.id,
+    turnId: ctx.turnId,
+    model,
+    providerId: ctx.models.image.providerId,
+    providerName: ctx.models.image.providerName,
+    images: data.length,
+  });
 
   const saved = await saveImageResults(ctx, data, {
     aspectRatio,

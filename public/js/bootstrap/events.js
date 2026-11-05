@@ -11,7 +11,12 @@ import {
   setAuthMode,
   submitAuth,
 } from '../features/auth.js';
-import { newChatView, restoreSession, toggleSessionFilter } from '../features/sessions.js';
+import {
+  compactSession,
+  newChatView,
+  restoreSession,
+  toggleSessionFilter,
+} from '../features/sessions.js';
 import {
   backToChat,
   closeFolderModal,
@@ -24,14 +29,27 @@ import {
 } from '../features/gallery.js';
 import { handlePaste, uploadFiles } from '../features/reference.js';
 import {
+  activateProvider,
+  addProvider,
   clearModelResult,
+  closeProviderMenu,
   closeSettings,
+  deleteProvider,
   fetchModels,
   openSettings,
   saveSettings,
+  selectProvider,
   testConnection,
   toggleKeyVisibility,
+  toggleProviderMenu,
 } from '../features/settings.js';
+import {
+  closeUsage,
+  openUsage,
+  saveUsagePricing,
+  setUsageMetric,
+  setUsageTab,
+} from '../features/usage.js';
 import { closeParams, renderParams, resetParams, toggleParams } from '../features/params.js';
 import {
   clearActiveQr,
@@ -77,6 +95,7 @@ export function bindEvents() {
   els.sendBtn.addEventListener('click', send);
   els.newChat.addEventListener('click', newChatView);
   els.archiveToggle.addEventListener('click', toggleSessionFilter);
+  els.compactBtn.addEventListener('click', compactSession);
   els.restoreArchived.addEventListener('click', () => {
     if (state.sessionId) restoreSession(state.sessionId);
   });
@@ -91,10 +110,25 @@ export function bindEvents() {
   });
 
   els.settingsBtn.addEventListener('click', openSettings);
+  els.modelPill.addEventListener('click', toggleProviderMenu);
+  els.providerMenu.addEventListener('click', (event) => event.stopPropagation());
+  els.usageBtn.addEventListener('click', openUsage);
   els.themeBtn.addEventListener('click', toggleTheme);
   els.themeBtnAuth.addEventListener('click', toggleTheme);
   els.closeSettings.addEventListener('click', closeSettings);
   els.saveSettings.addEventListener('click', saveSettings);
+  els.closeUsage.addEventListener('click', closeUsage);
+  els.usageRefresh.addEventListener('click', openUsage);
+  els.saveUsagePricing.addEventListener('click', saveUsagePricing);
+  els.usageModal.addEventListener('click', (event) => {
+    if (event.target === els.usageModal) closeUsage();
+  });
+  for (const tab of els.usageTabs) {
+    tab.addEventListener('click', () => setUsageTab(tab.dataset.usageTab));
+  }
+  for (const metric of els.usageMetrics) {
+    metric.addEventListener('click', () => setUsageMetric(metric.dataset.usageMetric));
+  }
 
   els.llmKeyToggle.addEventListener('click', () => toggleKeyVisibility('llm'));
   els.imageKeyToggle.addEventListener('click', () => toggleKeyVisibility('image'));
@@ -103,6 +137,18 @@ export function bindEvents() {
   els.llmTest.addEventListener('click', () => testConnection('llm'));
   els.imageTest.addEventListener('click', () => testConnection('image'));
   els.llmProtocol.addEventListener('change', () => clearModelResult('llm'));
+  els.llmProviderSelect.addEventListener('change', () =>
+    selectProvider('llm', els.llmProviderSelect.value),
+  );
+  els.llmProviderAdd.addEventListener('click', () => addProvider('llm'));
+  els.llmProviderDelete.addEventListener('click', () => deleteProvider('llm'));
+  els.llmProviderActive.addEventListener('click', () => activateProvider('llm'));
+  els.imageProviderSelect.addEventListener('change', () =>
+    selectProvider('image', els.imageProviderSelect.value),
+  );
+  els.imageProviderAdd.addEventListener('click', () => addProvider('image'));
+  els.imageProviderDelete.addEventListener('click', () => deleteProvider('image'));
+  els.imageProviderActive.addEventListener('click', () => activateProvider('image'));
 
   for (const target of ['llm', 'image']) {
     const select = target === 'llm' ? els.llmModelSelect : els.imageModelSelect;
@@ -267,6 +313,11 @@ export function bindEvents() {
   });
 
   document.addEventListener('click', (event) => {
+    if (!els.providerMenu.hidden) {
+      if (!els.providerMenu.contains(event.target) && !els.modelPill.contains(event.target)) {
+        closeProviderMenu();
+      }
+    }
     if (els.paramPanel.hidden) return;
     if (els.paramPanel.contains(event.target) || els.paramsBtn.contains(event.target)) return;
     closeParams();
@@ -282,7 +333,8 @@ export function bindEvents() {
     // The settings dialog is dismissed only by its X button. This prevents a
     // dragged text selection or Escape from discarding unsaved edits.
     if (!els.settingsModal.hidden) return;
-    if (!els.lightbox.hidden) closeLightbox();
+    if (!els.usageModal.hidden) closeUsage();
+    else if (!els.lightbox.hidden) closeLightbox();
     else if (!els.folderModal.hidden) closeFolderModal();
     else if (!els.studioModal.hidden) return;
     else if (!els.templateModal.hidden) closeTemplates();

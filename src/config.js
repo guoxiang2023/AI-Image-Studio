@@ -48,9 +48,28 @@ export const SUMMARY_KEEP = Math.min(
   SUMMARY_TRIGGER - 1,
   Math.max(4, Number(process.env.SUMMARY_KEEP_MESSAGES || 20)),
 );
-export const SUMMARY_COOLDOWN_MS = 5 * 60 * 1000;
 export const SUMMARY_INPUT_CHARS = Math.max(2000, Number(process.env.SUMMARY_INPUT_CHARS || 12000));
 export const SUMMARY_MAX_CALLS = Math.max(1, Number(process.env.SUMMARY_MAX_CALLS || 6));
+export const SUMMARY_TRIGGER_TOKENS = Math.max(
+  2000,
+  Number(process.env.SUMMARY_TRIGGER_TOKENS || 12000),
+);
+export const SUMMARY_KEEP_TOKENS = Math.max(
+  1000,
+  Number(process.env.SUMMARY_KEEP_TOKENS || 5000),
+);
+export const SUMMARY_MIN_KEEP = Math.min(
+  SUMMARY_KEEP,
+  Math.max(2, Number(process.env.SUMMARY_MIN_KEEP_MESSAGES || 4)),
+);
+export const SUMMARY_MAX_CHARS = Math.max(
+  600,
+  Number(process.env.SUMMARY_MAX_CHARS || 2400),
+);
+export const CONTEXT_TOKEN_BUDGET = Math.max(
+  SUMMARY_TRIGGER_TOKENS + 1000,
+  Number(process.env.CONTEXT_TOKEN_BUDGET || 20000),
+);
 export const CONTEXT_WINDOW = Math.max(
   SUMMARY_ENABLED ? SUMMARY_TRIGGER + 1 : 30,
   Number(process.env.CONTEXT_WINDOW_MESSAGES || (SUMMARY_ENABLED ? 120 : 30)),
@@ -69,6 +88,14 @@ export const DEFAULT_MODELS = {
     model: '',
     quality: IMAGE_QUALITY,
   },
+};
+
+// USD per 1M tokens / per generated image. Zero means "not configured".
+export const DEFAULT_PRICING = {
+  inputPerMillion: 0,
+  cachedPerMillion: 0,
+  outputPerMillion: 0,
+  imagePerImage: 0,
 };
 
 export const LLM_PROTOCOLS = ['openai', 'anthropic'];

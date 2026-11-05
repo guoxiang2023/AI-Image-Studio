@@ -7,7 +7,7 @@ import {
   normalizeRefRoles,
   normalizeTags,
 } from '../src/domain/chat-options.js';
-import { chatToClient, toLlmHistory } from '../src/domain/chat.js';
+import { buildImageMemory, chatToClient, estimateTokens, toLlmHistory } from '../src/domain/chat.js';
 import { markdownToHtml } from '../public/js/core/markdown.js';
 
 test('normalizes chat options and references', () => {
@@ -65,12 +65,41 @@ test('builds LLM history with summary cutoff and image markers', () => {
     messages: [
       { role: 'user', content: 'old' },
       { role: 'user', content: 'new', references: [{ id: 'a'.repeat(16), role: '角色' }] },
-      { role: 'assistant', content: 'done', images: [{ id: 'b'.repeat(16) }] },
+      { role: 'assistant', content: 'done', images: [{ id: 'b'.repeat(16), prompt: 'red fox' }] },
     ],
   });
   assert.equal(history.length, 2);
   assert.match(history[0].content, /参考图/);
   assert.match(history[1].content, /已生成图片/);
+  assert.match(history[1].content, /prompt=red fox/);
+});
+
+test('builds a durable image index and trims history by token budget', () => {
+  const memory = buildImageMemory({
+    lastImageId: 'b'.repeat(16),
+    messages: [
+      {
+        role: 'assistant',
+        images: [{ id: 'a'.repeat(16), prompt: 'red fox', parentId: 'c'.repeat(16) }],
+      },
+    ],
+  });
+  assert.match(memory, /image_id=aaaaaaaaaaaaaaaa/);
+  assert.match(memory, /prompt=red fox/);
+  assert.match(memory, /based_on=cccccccccccccccc/);
+  assert.match(memory, /最近一张：image_id=bbbbbbbbbbbbbbbb/);
+
+  const history = toLlmHistory({
+    summaryUpto: 0,
+    messages: [
+      { role: 'user', content: '中'.repeat(25000) },
+      { role: 'user', content: '最新问题' },
+    ],
+  });
+  assert.equal(history.length, 1);
+  assert.equal(history[0].content, '最新问题');
+  assert.equal(history.omitted, 1);
+  assert.ok(estimateTokens('中'.repeat(10)) > 5);
 });
 
 test('exposes partial drafts but hides empty ones', () => {

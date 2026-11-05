@@ -21,13 +21,14 @@ import {
   handleHideImage,
   handleUpdateImage,
 } from './routes/gallery.js';
-import { handleListSessions, handleSession } from './routes/sessions.js';
+import { handleListSessions, handleSession, handleCompactSession } from './routes/sessions.js';
 import {
   handleStyleGenerate,
   handleStyleImport,
   handleStyleReferences,
 } from './routes/studio.js';
 import { handleUpload } from './routes/upload.js';
+import { handleUsage } from './routes/usage.js';
 import { handleVersion } from './routes/version.js';
 import { serveImageFile, serveStatic } from './static.js';
 
@@ -47,6 +48,7 @@ function buildRouter() {
   router.put('/api/config', ({ req, res, user }) => handleConfig(req, res, user));
   router.post('/api/models', ({ req, res, user }) => handleModels(req, res, user));
   router.post('/api/test', ({ req, res, user }) => handleTest(req, res, user));
+  router.get('/api/usage', ({ req, res, user }) => handleUsage(req, res, user));
 
   router.get('/api/gallery', ({ req, res, user }) => handleGallery(req, res, user));
   router.post('/api/gallery/folders', ({ req, res, user }) => handleCreateFolder(req, res, user));
@@ -66,6 +68,9 @@ function buildRouter() {
   );
   router.patch('/api/sessions/:id', ({ req, res, user, params }) =>
     handleSession(req, res, user, params.id),
+  );
+  router.post('/api/sessions/:id/compact', ({ req, res, user, params }) =>
+    handleCompactSession(req, res, user, params.id),
   );
   router.delete('/api/sessions/:id', ({ req, res, user, params }) =>
     handleSession(req, res, user, params.id),

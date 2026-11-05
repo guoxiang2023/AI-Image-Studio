@@ -16,7 +16,8 @@ export async function handleConfig(req, res, user) {
 export function handleRevealKey(req, res, user) {
   const url = new URL(req.url, 'http://localhost');
   const target = url.searchParams.get('target') === 'image' ? 'image' : 'llm';
-  const apiKey = revealApiKey(user.id, target);
+  const providerId = url.searchParams.get('providerId') || '';
+  const apiKey = revealApiKey(user.id, target, providerId);
   res.setHeader('Cache-Control', 'no-store');
   if (!apiKey) return json(res, 404, { error: '未配置 API Key' });
   return json(res, 200, { apiKey });

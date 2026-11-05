@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { closeDb, initDb } from '../src/data/database.js';
-import { getSettings } from '../src/data/repositories/model-settings.js';
+import { getSettings, saveSettings } from '../src/data/repositories/model-settings.js';
 import { setSecretBox } from '../src/shared/runtime.js';
 import {
   draftSettings,
@@ -121,4 +121,135 @@ test('persists image quality and uses it as the request default', () => {
 
   updateSettingsPatch('u4', { image: { quality: 'low' } });
   assert.equal(publicSettings('u4').image.quality, 'low');
+});
+
+test('stores multiple providers, switches active, and preserves keys by provider', () => {
+  const saved = updateSettingsPatch('u5', {
+    llm: {
+      activeId: 'llm-a',
+      providers: [
+        {
+          id: 'llm-a',
+          name: 'Provider A',
+          baseUrl: 'https://a.example/v1',
+          model: 'model-a',
+          apiKey: 'key-a',
+        },
+        {
+          id: 'llm-b',
+          name: 'Provider B',
+          baseUrl: 'https://b.example/v1',
+          model: 'model-b',
+          apiKey: 'key-b',
+        },
+      ],
+    },
+  });
+  assert.equal(saved.llm.providers.length, 2);
+  assert.equal(saved.llm.id, 'llm-a');
+  assert.equal(saved.llm.apiKeySet, true);
+  assert.equal(loadSettings('u5').llm.apiKey, 'key-a');
+
+  updateSettingsPatch('u5', { llm: { activeId: 'llm-b' } });
+  const switched = publicSettings('u5').llm;
+  assert.equal(switched.id, 'llm-b');
+  assert.equal(switched.model, 'model-b');
+  assert.equal(switched.apiKeySet, true);
+  assert.equal(revealApiKey('u5', 'llm', 'llm-a'), 'key-a');
+  assert.equal(revealApiKey('u5', 'llm', 'llm-b'), 'key-b');
+
+  updateSettingsPatch('u5', {
+    llm: {
+      activeId: 'llm-b',
+      providers: [
+        { id: 'llm-a', name: 'Provider A2', baseUrl: 'https://a.example/v1', model: 'model-a2' },
+        { id: 'llm-b', name: 'Provider B', baseUrl: 'https://b.example/v1', model: 'model-b' },
+      ],
+    },
+  });
+  assert.equal(revealApiKey('u5', 'llm', 'llm-a'), 'key-a');
+  assert.equal(revealApiKey('u5', 'llm', 'llm-b'), 'key-b');
+
+  updateSettingsPatch('u5', {
+    providerPricing: {
+      'llm-a': { inputPerMillion: 1, outputPerMillion: 2 },
+      'llm-b': { inputPerMillion: 3, outputPerMillion: 4 },
+    },
+  });
+  const priced = publicSettings('u5').llm.providers;
+  assert.equal(priced.find((provider) => provider.id === 'llm-a').pricing.inputPerMillion, 1);
+  assert.equal(priced.find((provider) => provider.id === 'llm-b').pricing.outputPerMillion, 4);
+
+  updateSettingsPatch('u5', {
+    llm: {
+      activeId: 'llm-b',
+      providers: [
+        { id: 'llm-b', name: 'Provider B', baseUrl: 'https://b.example/v1', model: 'model-b' },
+      ],
+    },
+  });
+  assert.equal(publicSettings('u5').llm.providers.length, 1);
+  assert.equal(publicSettings('u5').llm.activeId, 'llm-b');
+});
+
+test('does not inherit an active key for an unsaved provider probe', () => {
+  updateSettingsPatch('u6', {
+    llm: {
+      baseUrl: 'https://safe.example/v1',
+      model: 'safe-model',
+      apiKey: 'active-secret',
+    },
+  });
+  const activeId = publicSettings('u6').llm.id;
+  const unknown = draftSettings(
+    {
+      providerId: 'not-saved-provider',
+      baseUrl: 'https://other.example/v1',
+      model: 'other-model',
+    },
+    'llm',
+    'u6',
+  );
+  assert.equal(unknown.apiKey, '');
+  assert.equal(unknown.baseUrl, 'https://other.example/v1');
+
+  const known = draftSettings(
+    {
+      providerId: activeId,
+      baseUrl: 'https://safe.example/v1',
+      model: 'safe-model-2',
+    },
+    'llm',
+    'u6',
+  );
+  assert.equal(known.apiKey, 'active-secret');
+});
+
+test('wraps a legacy single provider with its old pricing', () => {
+  const sealed = (value) => `sealed:${Buffer.from(value).toString('base64')}`;
+  saveSettings(
+    'u7',
+    JSON.stringify({
+      baseUrl: 'https://legacy.example/v1',
+      model: 'legacy-llm',
+      apiKey: sealed('legacy-key'),
+    }),
+    JSON.stringify({
+      baseUrl: 'https://legacy-image.example/v1',
+      model: 'legacy-image',
+      apiKey: sealed('legacy-image-key'),
+    }),
+    JSON.stringify({ inputPerMillion: 1.5, outputPerMillion: 6, imagePerImage: 0.04 }),
+  );
+
+  const cfg = publicSettings('u7');
+  assert.equal(cfg.llm.providers.length, 1);
+  assert.equal(cfg.llm.providers[0].id, 'llm-default');
+  assert.equal(cfg.llm.activeId, 'llm-default');
+  assert.equal(cfg.llm.providers[0].apiKeySet, true);
+  assert.equal(cfg.llm.providers[0].pricing.inputPerMillion, 1.5);
+  assert.equal(cfg.image.providers.length, 1);
+  assert.equal(cfg.image.providers[0].id, 'image-default');
+  assert.equal(cfg.image.providers[0].pricing.imagePerImage, 0.04);
+  assert.equal(loadSettings('u7').llm.apiKey, 'legacy-key');
 });

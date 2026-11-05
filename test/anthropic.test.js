@@ -5,6 +5,7 @@ import { chatCompletion, streamChatCompletion } from '../src/ai/llm.js';
 import {
   ANTHROPIC_VERSION,
   anthropicBaseUrl,
+  anthropicToOpenAiResponse,
   buildAnthropicRequest,
 } from '../src/ai/anthropic.js';
 
@@ -119,6 +120,26 @@ test('converts tool messages and tools to Anthropic Messages format', () => {
     type: 'tool_result',
     tool_use_id: 'call_1',
     content: '{"ok":true}',
+  });
+});
+
+test('maps Anthropic cache usage to prompt and cached tokens', () => {
+  const result = anthropicToOpenAiResponse({
+    type: 'message',
+    content: [{ type: 'text', text: 'ok' }],
+    stop_reason: 'end_turn',
+    usage: {
+      input_tokens: 100,
+      cache_read_input_tokens: 80,
+      cache_creation_input_tokens: 20,
+      output_tokens: 5,
+    },
+  });
+  assert.deepEqual(result.usage, {
+    prompt_tokens: 200,
+    completion_tokens: 5,
+    total_tokens: 205,
+    cache_read_input_tokens: 80,
   });
 });
 

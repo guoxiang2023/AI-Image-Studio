@@ -70,7 +70,10 @@ export function renderModels() {
   }
   const missing = !cfg.llm.apiKeySet || !cfg.image.apiKeySet;
   els.modelPill.classList.toggle('warn', missing);
-  els.modelPill.textContent = missing ? '未配置模型' : cfg.image.model;
+  els.modelPill.textContent = missing ? '未配置模型' : cfg.image.name || cfg.image.model;
+  els.modelPill.title = `对话：${cfg.llm.name || cfg.llm.model || '未配置'} · 图片：${
+    cfg.image.name || cfg.image.model || '未配置'
+  }`;
 }
 
 export function showChatView() {

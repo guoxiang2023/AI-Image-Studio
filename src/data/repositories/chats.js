@@ -38,7 +38,9 @@ export function insertChat(chat) {
 export function updateChat(chat) {
   getDb()
     .prepare(
-      `UPDATE chats SET title = ?, updated_at = ?, last_image_id = ?, cover_url = ?, messages_json = ?, summary = ?, summary_upto = ?
+      `UPDATE chats SET title = ?, updated_at = ?, last_image_id = ?, cover_url = ?, messages_json = ?,
+         summary = CASE WHEN summary_upto > ? THEN summary ELSE ? END,
+         summary_upto = CASE WHEN summary_upto > ? THEN summary_upto ELSE ? END
        WHERE id = ? AND user_id = ?`,
     )
     .run(
@@ -47,7 +49,9 @@ export function updateChat(chat) {
       chat.lastImageId,
       chat.coverUrl,
       chat.messagesJson,
+      chat.summaryUpto || 0,
       chat.summary || '',
+      chat.summaryUpto || 0,
       chat.summaryUpto || 0,
       chat.id,
       chat.userId,
@@ -56,8 +60,13 @@ export function updateChat(chat) {
 
 export function updateChatSummary(userId, id, summary, upto) {
   getDb()
-    .prepare('UPDATE chats SET summary = ?, summary_upto = ? WHERE id = ? AND user_id = ?')
-    .run(summary, upto, id, userId);
+    .prepare(
+      `UPDATE chats SET
+         summary = CASE WHEN ? >= summary_upto THEN ? ELSE summary END,
+         summary_upto = CASE WHEN ? >= summary_upto THEN ? ELSE summary_upto END
+       WHERE id = ? AND user_id = ?`,
+    )
+    .run(upto, summary, upto, upto, id, userId);
 }
 
 export function setChatArchived(userId, id, archivedAt) {

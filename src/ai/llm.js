@@ -172,6 +172,7 @@ async function readChatStream(res, onDelta, onActivity) {
   const calls = new Map();
   let finishReason = null;
   let terminal = false;
+  let completed = false;
   let usage = null;
   let buffer = '';
 
@@ -182,6 +183,7 @@ async function readChatStream(res, onDelta, onActivity) {
     if (!payload) return;
     if (payload === '[DONE]') {
       terminal = true;
+      completed = true;
       return;
     }
     let data;
@@ -193,6 +195,7 @@ async function readChatStream(res, onDelta, onActivity) {
     if (data?.error) {
       throw new Error(`对话模型请求失败：${extractError(JSON.stringify(data))}`);
     }
+    if (data?.usage) usage = data.usage;
     const choice = data?.choices?.[0];
     if (!choice) return;
     const delta = choice.delta || choice.message || {};
@@ -208,7 +211,6 @@ async function readChatStream(res, onDelta, onActivity) {
       finishReason = choice.finish_reason;
       terminal = true;
     }
-    if (data.usage) usage = data.usage;
   };
 
   while (true) {
@@ -220,9 +222,8 @@ async function readChatStream(res, onDelta, onActivity) {
     while ((index = buffer.indexOf('\n')) >= 0) {
       handleLine(buffer.slice(0, index));
       buffer = buffer.slice(index + 1);
-      if (terminal) break;
     }
-    if (terminal) {
+    if (completed) {
       await reader.cancel().catch(() => {});
       break;
     }
@@ -416,7 +417,7 @@ export async function requestImage(imageCfg, pathname, init, signal) {
     if (!Array.isArray(parsed.data) || !parsed.data.length) {
       throw new Error(extractError(text) || '图片模型没有返回图片');
     }
-    return parsed.data;
+    return { data: parsed.data, usage: parsed.usage || null };
   }
 
   throw networkError(lastError);
@@ -433,7 +434,7 @@ export function sanitizeDirectedPrompt(text) {
 
 export async function directImagePrompt(
   llm,
-  { userText, draft, aspectRatio, model, mode = 'generate' },
+  { userText, draft, aspectRatio, model, mode = 'generate', onUsage },
   signal,
 ) {
   if (!PROMPT_OPTIMIZE || !llm?.apiKey) return draft;
@@ -448,15 +449,16 @@ export async function directImagePrompt(
     draft,
   ].join('\n');
   try {
+    const requestMessages = [
+      {
+        role: 'system',
+        content: system,
+      },
+      { role: 'user', content: userPrompt },
+    ];
     const response = await chatCompletion(
       llm,
-      [
-        {
-          role: 'system',
-          content: system,
-        },
-        { role: 'user', content: userPrompt },
-      ],
+      requestMessages,
       {
         signal,
         tools: false,
@@ -465,6 +467,7 @@ export async function directImagePrompt(
         model: PROMPT_MODEL || undefined,
       },
     );
+    onUsage?.(response, requestMessages);
     const directed = sanitizeDirectedPrompt(response?.choices?.[0]?.message?.content);
     return directed || draft;
   } catch (err) {

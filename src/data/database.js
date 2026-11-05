@@ -29,8 +29,33 @@ export function initDb(dataDir) {
       user_id TEXT PRIMARY KEY,
       llm_json TEXT NOT NULL,
       image_json TEXT NOT NULL,
+      pricing_json TEXT NOT NULL DEFAULT '{}',
       updated_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS usage_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT NOT NULL,
+      chat_id TEXT,
+      turn_id TEXT,
+      kind TEXT NOT NULL,
+      model TEXT,
+      provider_id TEXT,
+      provider_name TEXT,
+      provider_type TEXT,
+      prompt_tokens INTEGER NOT NULL DEFAULT 0,
+      cached_tokens INTEGER NOT NULL DEFAULT 0,
+      completion_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens INTEGER NOT NULL DEFAULT 0,
+      requests INTEGER NOT NULL DEFAULT 1,
+      images INTEGER NOT NULL DEFAULT 0,
+      estimated INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_usage_events_user_created
+      ON usage_events(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_usage_events_chat
+      ON usage_events(user_id, chat_id, created_at DESC);
 
     CREATE TABLE IF NOT EXISTS chats (
       id TEXT PRIMARY KEY,
@@ -83,6 +108,32 @@ export function initDb(dataDir) {
     db.exec('ALTER TABLE chats DROP COLUMN skill_id');
   }
   db.exec('DROP TABLE IF EXISTS skills');
+
+  const settingsColumns = new Set(
+    db.prepare('PRAGMA table_info(user_settings)').all().map((row) => row.name),
+  );
+  if (!settingsColumns.has('pricing_json')) {
+    db.exec("ALTER TABLE user_settings ADD COLUMN pricing_json TEXT NOT NULL DEFAULT '{}'");
+  }
+
+  const usageColumns = new Set(
+    db.prepare('PRAGMA table_info(usage_events)').all().map((row) => row.name),
+  );
+  if (!usageColumns.has('estimated')) {
+    db.exec('ALTER TABLE usage_events ADD COLUMN estimated INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!usageColumns.has('cached_tokens')) {
+    db.exec('ALTER TABLE usage_events ADD COLUMN cached_tokens INTEGER NOT NULL DEFAULT 0');
+  }
+  for (const [name, ddl] of Object.entries({
+    provider_id: 'TEXT',
+    provider_name: 'TEXT',
+    provider_type: 'TEXT',
+  })) {
+    if (!usageColumns.has(name)) {
+      db.exec(`ALTER TABLE usage_events ADD COLUMN ${name} ${ddl}`);
+    }
+  }
 
   const galleryColumns = new Set(
     db.prepare('PRAGMA table_info(gallery_images)').all().map((row) => row.name),

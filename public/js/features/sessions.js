@@ -4,12 +4,13 @@ import {
   els,
   formatTime,
   icon,
+  scrollBottom,
   setTitle,
   showChatView,
   state,
   toast,
 } from '../core/index.js';
-import { renderMessages } from './messages.js';
+import { prependSummaryNote, renderMessages } from './messages.js';
 import { cancelStreamForNavigation } from './stream.js';
 import { clearReference } from './reference.js';
 import { closeSidebar } from './overlays.js';
@@ -105,6 +106,54 @@ export function markActiveSession() {
   }
 }
 
+export function updateCompactButton() {
+  if (!els.compactBtn) return;
+  els.compactBtn.disabled = !state.sessionId || state.chatArchived;
+  els.compactBtn.title = state.chatArchived
+    ? '恢复会话后可压缩'
+    : '压缩上下文，保留长期记忆';
+}
+
+export async function compactSession() {
+  if (!state.sessionId) {
+    toast('先打开一个会话');
+    return;
+  }
+  if (state.streaming) {
+    toast('请等待当前回复完成');
+    return;
+  }
+  if (state.chatArchived) {
+    toast('恢复会话后才能压缩');
+    return;
+  }
+
+  const button = els.compactBtn;
+  if (!button || button.disabled) return;
+  button.disabled = true;
+  button.classList.add('is-busy');
+  toast('正在压缩上下文…');
+  try {
+    const result = await api(`/api/sessions/${state.sessionId}/compact`, { method: 'POST' });
+    state.summary = result.summary || '';
+    state.summaryUpto = result.upto || 0;
+    prependSummaryNote();
+    scrollBottom();
+    toast(
+      result.compacted
+        ? result.fallback
+          ? '摘要模型不可用，已用自动摘录压缩'
+          : '上下文已压缩，较早内容已存入记忆'
+        : '当前没有可压缩的上下文',
+    );
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.classList.remove('is-busy');
+    updateCompactButton();
+  }
+}
+
 export async function refreshSessions() {
   try {
     const query = state.sessionFilter === 'archived' ? '?archived=1' : '';
@@ -137,6 +186,7 @@ export function newChatView() {
   setTitle('新对话');
   renderMessages();
   markActiveSession();
+  updateCompactButton();
   closeSidebar();
   els.input.focus();
 }
@@ -162,6 +212,7 @@ export async function openSession(id) {
     setTitle(session.title || '对话');
     renderMessages();
     markActiveSession();
+    updateCompactButton();
     closeSidebar();
     return true;
   } catch (error) {
@@ -195,6 +246,7 @@ export async function restoreSession(id) {
     if (state.sessionId === id) {
       state.chatArchived = false;
       showChatView();
+      updateCompactButton();
     }
     state.sessionFilter = 'active';
     await refreshSessions();

@@ -194,11 +194,15 @@ function stopReason(value) {
 function usageOf(usage) {
   if (!usage) return null;
   const input = Number(usage.input_tokens) || 0;
+  const cacheRead = Number(usage.cache_read_input_tokens) || 0;
+  const cacheCreation = Number(usage.cache_creation_input_tokens) || 0;
   const output = Number(usage.output_tokens) || 0;
+  const prompt = input + cacheRead + cacheCreation;
   return {
-    prompt_tokens: input,
+    prompt_tokens: prompt,
     completion_tokens: output,
-    total_tokens: input + output,
+    total_tokens: prompt + output,
+    ...(cacheRead ? { cache_read_input_tokens: cacheRead } : {}),
   };
 }
 
@@ -248,6 +252,8 @@ export async function readAnthropicStream(res, onDelta, onActivity) {
   const calls = new Map();
   let stop = null;
   let inputTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheCreationTokens = 0;
   let outputTokens = 0;
   let terminal = false;
   let buffer = '';
@@ -277,6 +283,10 @@ export async function readAnthropicStream(res, onDelta, onActivity) {
 
     if (data?.type === 'message_start') {
       inputTokens = Number(data.message?.usage?.input_tokens) || inputTokens;
+      cacheReadTokens =
+        Number(data.message?.usage?.cache_read_input_tokens) || cacheReadTokens;
+      cacheCreationTokens =
+        Number(data.message?.usage?.cache_creation_input_tokens) || cacheCreationTokens;
       return;
     }
 
@@ -317,7 +327,13 @@ export async function readAnthropicStream(res, onDelta, onActivity) {
 
     if (data?.type === 'message_delta') {
       if (data.delta?.stop_reason) stop = data.delta.stop_reason;
-      if (data.usage) outputTokens = Number(data.usage.output_tokens) || outputTokens;
+      if (data.usage) {
+        outputTokens = Number(data.usage.output_tokens) || outputTokens;
+        cacheReadTokens =
+          Number(data.usage.cache_read_input_tokens) || cacheReadTokens;
+        cacheCreationTokens =
+          Number(data.usage.cache_creation_input_tokens) || cacheCreationTokens;
+      }
       return;
     }
 
@@ -360,14 +376,16 @@ export async function readAnthropicStream(res, onDelta, onActivity) {
   const message = { role: 'assistant', content: text.join('') };
   const toolCalls = [...calls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call);
   if (toolCalls.length) message.tool_calls = toolCalls;
+  const promptTokens = inputTokens + cacheReadTokens + cacheCreationTokens;
   return {
     choices: [{ index: 0, message, finish_reason: stopReason(stop) }],
-    ...(inputTokens || outputTokens
+    ...(promptTokens || outputTokens
       ? {
           usage: {
-            prompt_tokens: inputTokens,
+            prompt_tokens: promptTokens,
             completion_tokens: outputTokens,
-            total_tokens: inputTokens + outputTokens,
+            total_tokens: promptTokens + outputTokens,
+            ...(cacheReadTokens ? { cache_read_input_tokens: cacheReadTokens } : {}),
           },
         }
       : {}),

@@ -46,6 +46,65 @@ test('streams text and assembles fragmented tool calls', async () => {
   }
 });
 
+test('captures usage sent after the finish reason', async () => {
+  const server = http.createServer((req, res) => {
+    req.resume();
+    res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' });
+    res.end(
+      [
+        'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+        'data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":3,"total_tokens":15}}\n\n',
+        'data: [DONE]\n\n',
+      ].join(''),
+    );
+  });
+  const port = await listen(server);
+  try {
+    const result = await streamChatCompletion(
+      { baseUrl: `http://127.0.0.1:${port}/v1`, model: 'test', apiKey: 'test' },
+      [],
+      {},
+    );
+    assert.equal(result.choices[0].message.content, 'ok');
+    assert.deepEqual(result.usage, {
+      prompt_tokens: 12,
+      completion_tokens: 3,
+      total_tokens: 15,
+    });
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('accepts a finish reason when the provider closes without [DONE]', async () => {
+  let requests = 0;
+  const server = http.createServer((req, res) => {
+    req.resume();
+    requests += 1;
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.end(
+      [
+        'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+      ].join(''),
+    );
+  });
+  const port = await listen(server);
+  try {
+    const result = await streamChatCompletion(
+      { baseUrl: `http://127.0.0.1:${port}/v1`, model: 'test', apiKey: 'test' },
+      [],
+      {},
+    );
+    assert.equal(requests, 1);
+    assert.equal(result.choices[0].message.content, 'ok');
+    assert.equal(result.choices[0].finish_reason, 'stop');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test('resets partial output and retries a stalled stream', async () => {
   let requests = 0;
   const server = http.createServer((req, res) => {

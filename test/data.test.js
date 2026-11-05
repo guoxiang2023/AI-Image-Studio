@@ -16,6 +16,7 @@ import {
   listChats,
   setChatArchived,
   updateChat,
+  updateChatSummary,
 } from '../src/data/repositories/chats.js';
 import {
   createGalleryFolder,
@@ -64,6 +65,14 @@ test('chat repository round-trips serialized documents', () => {
   assert.equal(getChat('u1', 'c1').title, 'hello');
   updateChat({ ...document, title: 'updated', updatedAt: 3 });
   assert.equal(getChat('u1', 'c1').title, 'updated');
+  updateChatSummary('u1', 'c1', 'newer memory', 5);
+  updateChat({ ...document, title: 'stale', summary: 'stale memory', summaryUpto: 2 });
+  assert.equal(getChat('u1', 'c1').title, 'stale');
+  assert.equal(getChat('u1', 'c1').summary, 'newer memory');
+  assert.equal(getChat('u1', 'c1').summary_upto, 5);
+  updateChatSummary('u1', 'c1', 'older memory', 3);
+  assert.equal(getChat('u1', 'c1').summary, 'newer memory');
+  assert.equal(getChat('u1', 'c1').summary_upto, 5);
   setChatArchived('u1', 'c1', 4);
   assert.equal(listChats('u1').length, 0);
   assert.equal(listChats('u1', { archived: true })[0].id, 'c1');

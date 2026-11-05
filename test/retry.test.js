@@ -66,6 +66,36 @@ test('image generation reports a network error after five retries', async () => 
   }
 });
 
+test('returns image data together with provider usage', async () => {
+  const server = http.createServer((req, res) => {
+    req.resume();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        data: [{ b64_json: 'aGVsbG8=' }],
+        usage: { total_tokens: 42, input_tokens: 12, output_tokens: 30 },
+      }),
+    );
+  });
+  const port = await listen(server);
+  try {
+    const result = await requestImage(
+      { baseUrl: `http://127.0.0.1:${port}/v1`, model: 'test', apiKey: 'test' },
+      '/images/generations',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      },
+    );
+    assert.equal(result.data.length, 1);
+    assert.equal(result.data[0].b64_json, 'aGVsbG8=');
+    assert.equal(result.usage.total_tokens, 42);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test('does not retry a non-retryable client error', async () => {
   let requests = 0;
   const server = http.createServer((req, res) => {
