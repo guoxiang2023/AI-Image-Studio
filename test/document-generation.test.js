@@ -111,6 +111,9 @@ test('malformed document plan fails closed without saving a document', async (t)
 
   assert.match(result.error, /文档策划失败/);
   assert.equal(requests, 1, 'composition must not run after an unusable plan');
-  assert.ok(lastRequest?.max_tokens >= 4000, 'plan output must not truncate at 2000 tokens');
+  assert.ok(
+    lastRequest?.max_tokens >= 12000,
+    'plan output budget must cover hidden reasoning plus the JSON plan',
+  );
   assert.deepEqual(listUserDocuments(userId), []);
 });

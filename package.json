@@ -1,6 +1,6 @@
 {
   "name": "luma-image-agent",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "private": true,
   "type": "module",
   "description": "Luma · 对话式 AI 与图片创作智能体",

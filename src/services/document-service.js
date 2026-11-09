@@ -24,6 +24,12 @@ import { loadChatForUser } from './chat-service.js';
 import { loadSettings } from './model-settings-service.js';
 import { recordLlmUsage } from './usage-service.js';
 
+// Reasoning models spend part of the completion budget on hidden reasoning.
+// 4000 tokens was too small for the planning JSON and consistently truncated
+// the response (finish_reason=length), which then failed JSON parsing.
+const PLAN_MAX_TOKENS = 12000;
+const DOCUMENT_MAX_TOKENS = 16000;
+
 async function rasterizeImage(file) {
   try {
     const source = sharp(file.path, { failOn: 'none', animated: false });
@@ -128,10 +134,16 @@ export async function generateSessionDocument(
       tools: false,
       // DeepSeek-style models can easily spend >2000 tokens on the plan and
       // truncate the JSON. Keep enough headroom for a complete plan.
-      maxTokens: 4000,
+      maxTokens: PLAN_MAX_TOKENS,
       temperature: 0.2,
       signal: timeoutSignal,
     });
+    if (planResponse?.choices?.[0]?.finish_reason === 'length') {
+      throw new AppError(
+        502,
+        `文档策划失败：模型输出达到 ${PLAN_MAX_TOKENS} token 上限，请降低推理等级或重试`,
+      );
+    }
     const planText = String(planResponse?.choices?.[0]?.message?.content || '').trim();
     plan = parseDocumentPlan(planText, candidates);
     if (planResponse) {
@@ -170,10 +182,16 @@ export async function generateSessionDocument(
   try {
     const response = await chatCompletion(models.llm, messages, {
       tools: false,
-      maxTokens: 6000,
+      maxTokens: DOCUMENT_MAX_TOKENS,
       temperature: 0.4,
       signal: timeoutSignal,
     });
+    if (response?.choices?.[0]?.finish_reason === 'length') {
+      throw new AppError(
+        502,
+        `文档生成失败：模型输出达到 ${DOCUMENT_MAX_TOKENS} token 上限，请降低推理等级或重试`,
+      );
+    }
     markdown = String(response?.choices?.[0]?.message?.content || '').trim();
     if (response) {
       recordLlmUsage({
@@ -192,6 +210,7 @@ export async function generateSessionDocument(
   } catch (err) {
     if (signal?.aborted) throw err;
     console.warn('文档编排失败:', err.message);
+    if (err instanceof AppError) throw err;
     throw new AppError(502, `文档生成失败：${friendlyError(err)}`);
   }
 
