@@ -4,6 +4,7 @@ import {
   els,
   formatTime,
   icon,
+  notifyUnauthorized,
   scrollBottom,
   setTitle,
   showChatView,
@@ -13,6 +14,7 @@ import {
 import { prependSummaryNote, renderMessages } from './messages.js';
 import { cancelStreamForNavigation } from './stream.js';
 import { clearReference } from './reference.js';
+import { clearAttachments } from './attachments.js';
 import { closeSidebar } from './overlays.js';
 
 export function setSessionInUrl(id) {
@@ -21,6 +23,98 @@ export function setSessionInUrl(id) {
   if (id) url.searchParams.set('session', id);
   else url.searchParams.delete('session');
   history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+}
+
+const IMPORT_MAX_BYTES = 96 * 1024 * 1024;
+let importing = false;
+
+function safeDownloadName(title) {
+  const name = String(title || 'Luma 会话')
+    .replace(/[\\/:*?"<>|\r\n\t]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 50)
+    .replace(/[. ]+$/, '');
+  return `${name || 'Luma 会话'}.luma-session.zip`;
+}
+
+function responseFilename(response, title) {
+  const disposition = response.headers.get('content-disposition') || '';
+  const match = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+  if (match) {
+    try {
+      return decodeURIComponent(match[1]);
+    } catch {
+      /* use the local fallback */
+    }
+  }
+  return safeDownloadName(title);
+}
+
+export async function exportSession(id) {
+  const session = state.sessions.find((item) => item.id === id);
+  try {
+    toast('正在导出会话…');
+    const response = await fetch(`/api/sessions/${id}/export`);
+    if (response.status === 401) {
+      notifyUnauthorized();
+      throw new Error('请先登录');
+    }
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || '导出失败');
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = responseFilename(response, session?.title);
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast('会话已导出');
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+export async function importSessionFile(file) {
+  if (!file || importing) return;
+  if (!/\.zip$/i.test(file.name || '')) {
+    toast('请选择 .zip 会话文件');
+    return;
+  }
+  if (file.size > IMPORT_MAX_BYTES) {
+    toast('会话文件不能超过 96MB');
+    return;
+  }
+
+  importing = true;
+  try {
+    toast('正在导入会话…');
+    const response = await fetch('/api/sessions/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/zip' },
+      body: file,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (response.status === 401) {
+      notifyUnauthorized();
+      throw new Error('请先登录');
+    }
+    if (!response.ok) throw new Error(data.error || '导入失败');
+    state.sessionFilter = 'active';
+    await refreshSessions();
+    await openSession(data.session.id);
+    toast(`已导入「${data.session.title}」`);
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    importing = false;
+    if (els.sessionImportInput) els.sessionImportInput.value = '';
+  }
 }
 
 export function renderSessionList() {
@@ -83,6 +177,17 @@ export function renderSessionList() {
       });
       actions.appendChild(archive);
     }
+
+    const exportBtn = el('button', 'session-archive session-export');
+    exportBtn.type = 'button';
+    exportBtn.title = '导出会话';
+    exportBtn.setAttribute('aria-label', `导出 ${s.title || '新对话'}`);
+    exportBtn.appendChild(icon('download'));
+    exportBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      exportSession(s.id);
+    });
+    actions.appendChild(exportBtn);
 
     const del = el('button', 'session-del', '×');
     del.type = 'button';
@@ -183,6 +288,7 @@ export function newChatView() {
   state.summary = '';
   state.summaryUpto = 0;
   clearReference();
+  clearAttachments();
   setTitle('新对话');
   renderMessages();
   markActiveSession();
@@ -209,6 +315,7 @@ export async function openSession(id) {
     state.summary = session.summary || '';
     state.summaryUpto = session.summaryUpto || 0;
     clearReference();
+    clearAttachments();
     setTitle(session.title || '对话');
     renderMessages();
     markActiveSession();

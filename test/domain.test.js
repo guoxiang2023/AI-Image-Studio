@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  normalizeAttachmentIds,
   normalizeChatOptions,
   normalizeQr,
   normalizeRefIds,
@@ -27,8 +28,40 @@ test('normalizes chat options and references', () => {
     normalizeRefIds(['a'.repeat(16), 'a'.repeat(16), 'b'.repeat(16), 'bad']),
     ['a'.repeat(16), 'b'.repeat(16)],
   );
+  assert.deepEqual(normalizeAttachmentIds(['a'.repeat(16), 'a'.repeat(16), 'b'.repeat(16), 'bad']), [
+    'a'.repeat(16),
+    'b'.repeat(16),
+  ]);
   assert.deepEqual(normalizeRefRoles(['角色', '非法'], 3), ['角色', '参考', '参考']);
   assert.deepEqual(normalizeTags(' 霓虹, 霓虹, 夜景 ， 电影感 '), ['霓虹', '夜景', '电影感']);
+});
+
+test('includes document attachments in LLM history without leaking text to clients', () => {
+  const attachment = {
+    id: 'c'.repeat(16),
+    name: '报表.xlsx',
+    ext: 'xlsx',
+    kind: 'Excel 表格',
+    size: 1024,
+    chars: 12,
+    text: '名称\t数值\n苹果\t42',
+    truncated: false,
+  };
+  const chat = {
+    messages: [
+      { role: 'user', content: '分析一下', attachments: [attachment] },
+      { role: 'assistant', content: '好的' },
+    ],
+  };
+  const history = toLlmHistory(chat);
+  assert.equal(history.length, 2);
+  assert.match(history[0].content, /\[附件 1：报表\.xlsx（Excel 表格，共 12 字符）\]/);
+  assert.match(history[0].content, /名称\t数值/);
+  assert.match(history[0].content, /\[附件 1 结束\]/);
+
+  const client = chatToClient(chat);
+  assert.equal(client.messages[0].attachments[0].name, '报表.xlsx');
+  assert.equal(client.messages[0].attachments[0].text, undefined);
 });
 
 test('normalizes QR links and rejects unsafe schemes', () => {

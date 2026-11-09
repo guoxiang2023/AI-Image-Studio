@@ -12,6 +12,7 @@ import {
 import { newChatView, openSession, refreshSessions } from './sessions.js';
 import { renderParams } from './params.js';
 import { clearReference } from './reference.js';
+import { clearAttachments } from './attachments.js';
 import { checkForUpdates } from './updates.js';
 import { resetStudio } from './studio.js';
 
@@ -36,6 +37,7 @@ export async function initWorkspace() {
   state.summaryUpto = 0;
   state.streaming = false;
   state.gallery = { images: [], folders: [], activeFolder: 'all', query: '', favoriteOnly: false };
+  state.documents = [];
   state.options = { aspectRatio: null, count: null, quality: null };
   state.templateId = null;
   state.presetId = null;
@@ -55,6 +57,7 @@ export async function initWorkspace() {
   renderParams();
   showChatView();
   clearReference();
+  clearAttachments();
   setTitle('新对话');
   els.messages.innerHTML = '';
 
@@ -92,6 +95,7 @@ export function resetWorkspace() {
   state.sessionFilter = 'active';
   state.chatArchived = false;
   state.messages = [];
+  state.documents = [];
   state.options = { aspectRatio: null, count: null, quality: null };
   state.qr = null;
   resetStudio();
@@ -99,5 +103,9 @@ export function resetWorkspace() {
   if (els.qrForm) els.qrForm.hidden = true;
   renderParams();
   clearReference();
+  clearAttachments();
   els.messages.innerHTML = '';
+  if (els.documentsView) els.documentsView.hidden = true;
+  if (els.documentModal) els.documentModal.hidden = true;
+  if (els.documentsNav) els.documentsNav.classList.remove('active');
 }

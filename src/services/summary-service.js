@@ -37,6 +37,11 @@ function formatSummaryMessage(message) {
     } else if (message.referenceImageId) {
       text += `（参考图 ${message.referenceImageId}）`;
     }
+    if (Array.isArray(message.attachments) && message.attachments.length) {
+      text += `（附件：${message.attachments
+        .map((attachment) => `${attachment.name || '文件'}${attachment.chars ? ` ${attachment.chars} 字符` : ''}`)
+        .join('、')}）`;
+    }
     return text;
   }
   if (message.role === 'assistant') {
@@ -59,6 +64,9 @@ function messageTokens(message) {
   let text = String(message.content || '');
   for (const image of message.images || []) text += `\n${image.id} ${image.prompt || ''}`;
   for (const ref of message.references || []) text += `\n${ref.id} ${ref.role || ''}`;
+  for (const attachment of message.attachments || []) {
+    text += `\n${attachment.name || ''}\n${attachment.text || ''}`;
+  }
   return estimateTokens(text) + 4;
 }
 

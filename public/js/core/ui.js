@@ -52,8 +52,20 @@ export function updateSendButton() {
     return;
   }
   els.sendBtn.classList.remove('stop');
-  els.sendBtn.disabled = !els.input.value.trim();
+  els.sendBtn.disabled = !(
+    els.input.value.trim() ||
+    state.references.length ||
+    state.attachments.length
+  );
   els.sendBtn.setAttribute('aria-label', '发送');
+}
+
+export function updateComposerPlaceholder() {
+  els.input.placeholder = state.references.length
+    ? '描述要怎么改这些图，例如“把背景换成夜景”…'
+    : state.attachments.length
+      ? '说明想让 AI 怎么处理这些文件…'
+      : '描述画面，或粘贴参考图、上传文档开始…';
 }
 
 export function autoGrow() {
@@ -79,11 +91,13 @@ export function renderModels() {
 export function showChatView() {
   state.view = 'chat';
   els.galleryView.hidden = true;
+  els.documentsView.hidden = true;
   els.chatScroll.hidden = false;
   els.composerWrap.hidden = Boolean(state.chatArchived);
   els.archiveBanner.hidden = !state.chatArchived;
   els.topbarLabel.textContent = state.chatArchived ? 'ARCHIVED' : 'SESSION';
   els.galleryNav.classList.remove('active');
+  els.documentsNav.classList.remove('active');
   els.chatTitle.textContent = state.chatTitle || '新对话';
 }
 

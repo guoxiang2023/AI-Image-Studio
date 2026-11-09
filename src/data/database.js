@@ -92,6 +92,21 @@ export function initDb(dataDir) {
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_gallery_images_user ON gallery_images(user_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS generated_documents (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      chat_id TEXT,
+      title TEXT NOT NULL,
+      filename TEXT NOT NULL,
+      format TEXT NOT NULL,
+      size INTEGER NOT NULL,
+      image_count INTEGER NOT NULL DEFAULT 0,
+      preview_json TEXT NOT NULL DEFAULT '[]',
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_generated_documents_user
+      ON generated_documents(user_id, created_at DESC);
   `);
 
   const columns = new Set(db.prepare('PRAGMA table_info(chats)').all().map((row) => row.name));

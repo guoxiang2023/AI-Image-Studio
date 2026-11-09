@@ -1,4 +1,4 @@
-import { json, readJsonBody } from '../responses.js';
+import { json, readBody, readJsonBody } from '../responses.js';
 import {
   chatToClient,
   deleteUserChat,
@@ -10,6 +10,11 @@ import {
 import { loadSettings } from '../../services/model-settings-service.js';
 import { compressChatNow } from '../../services/summary-service.js';
 import { friendlyError } from '../../shared/utils.js';
+import {
+  SESSION_IMPORT_MAX_BYTES,
+  buildSessionExport,
+  importSessionArchive,
+} from '../../services/session-transfer-service.js';
 
 export function handleListSessions(req, res, user) {
   const url = new URL(req.url, 'http://localhost');
@@ -67,4 +72,27 @@ export async function handleCompactSession(req, res, user, sessionId) {
   } finally {
     res.off('close', onClose);
   }
+}
+
+
+export async function handleExportSession(req, res, user, sessionId) {
+  const result = await buildSessionExport(user, sessionId);
+  const fallback = 'luma-session.zip';
+  const encoded = encodeURIComponent(result.filename).replace(
+    /['()*]/g,
+    (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  res.writeHead(200, {
+    'Content-Type': 'application/zip',
+    'Content-Length': result.buffer.length,
+    'Content-Disposition': `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`,
+    'Cache-Control': 'private, no-store',
+  });
+  res.end(result.buffer);
+}
+
+export async function handleImportSession(req, res, user) {
+  const buffer = await readBody(req, SESSION_IMPORT_MAX_BYTES);
+  const session = await importSessionArchive(user, buffer);
+  return json(res, 201, { ok: true, session });
 }

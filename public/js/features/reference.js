@@ -1,19 +1,21 @@
-import { els, state, toast } from '../core/index.js';
+import {
+  els,
+  state,
+  toast,
+  updateComposerPlaceholder,
+  updateSendButton,
+} from '../core/index.js';
+import { isDocumentFile, uploadDocument } from './attachments.js';
 
 const MAX_REFERENCES = 4;
 const REFERENCE_ROLE_OPTIONS = ['参考', '角色', '风格', '构图', '版式', '产品'];
-
-function updateReferencePlaceholder() {
-  els.input.placeholder = state.references.length
-    ? '描述要怎么改这些图，例如“把背景换成夜景”…'
-    : '描述画面，或粘贴参考图开始改图…';
-}
 
 export function setPrimaryReference(ref) {
   if (!ref?.id) return;
   state.references = [{ ...ref, role: ref.role || '参考' }];
   renderReference();
-  updateReferencePlaceholder();
+  updateComposerPlaceholder();
+  updateSendButton();
 }
 
 export function addReference(ref) {
@@ -25,19 +27,22 @@ export function addReference(ref) {
   }
   state.references.push({ ...ref, role: ref.role || '参考' });
   renderReference();
-  updateReferencePlaceholder();
+  updateComposerPlaceholder();
+  updateSendButton();
 }
 
 export function removeReference(index) {
   state.references.splice(index, 1);
   renderReference();
-  updateReferencePlaceholder();
+  updateComposerPlaceholder();
+  updateSendButton();
 }
 
 export function clearReference() {
   state.references = [];
   renderReference();
-  updateReferencePlaceholder();
+  updateComposerPlaceholder();
+  updateSendButton();
 }
 
 export function renderReference() {
@@ -90,7 +95,7 @@ export async function uploadOne(file) {
     return;
   }
   if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
-    toast('只支持 PNG / JPEG / WebP');
+    toast('只支持 PNG / JPEG / WebP 图片');
     return;
   }
   if (state.references.length >= MAX_REFERENCES) {
@@ -114,14 +119,17 @@ export async function uploadOne(file) {
 
 export async function uploadFiles(files) {
   const list = Array.from(files || []);
-  for (const file of list) {
-    if (state.references.length >= MAX_REFERENCES) {
-      toast(`最多 ${MAX_REFERENCES} 张参考图`);
-      break;
+  try {
+    for (const file of list) {
+      if (isDocumentFile(file)) {
+        await uploadDocument(file);
+      } else {
+        await uploadOne(file);
+      }
     }
-    await uploadOne(file);
+  } finally {
+    els.fileInput.value = '';
   }
-  els.fileInput.value = '';
 }
 
 export async function handlePaste(event) {
@@ -145,23 +153,26 @@ export async function handlePaste(event) {
   if (items) {
     for (let i = 0; i < items.length; i += 1) {
       const item = items[i];
-      if (item.kind === 'file' && item.type.startsWith('image/')) {
-        const file = item.getAsFile();
-        if (file) {
-          event.preventDefault();
-          await uploadOne(file);
-          return;
-        }
-      }
+      if (item.kind !== 'file') continue;
+      const file = item.getAsFile();
+      if (!file) continue;
+      if (!file.type.startsWith('image/') && !isDocumentFile(file)) continue;
+      event.preventDefault();
+      if (isDocumentFile(file)) await uploadDocument(file);
+      else await uploadOne(file);
+      return;
     }
   }
 
   const files = clipboard.files;
   if (files && files.length) {
-    const file = Array.from(files).find((entry) => entry.type.startsWith('image/'));
+    const file = Array.from(files).find(
+      (entry) => entry.type.startsWith('image/') || isDocumentFile(entry),
+    );
     if (file) {
       event.preventDefault();
-      await uploadOne(file);
+      if (isDocumentFile(file)) await uploadDocument(file);
+      else await uploadOne(file);
     }
   }
 }

@@ -117,16 +117,29 @@ jobs:
             }
       - uses: softprops/action-gh-release@v2
         with:
-          name: Luma v1.0.5
+          name: Luma v1.0.6
           body: |
-            ## Luma v1.0.5
+            ## Luma v1.0.6
 
-            ### 修复
+            ### 新增
 
-            - 修复桌面端点击更新时提示 `Cannot find latest-mac.yml (404)`：桌面端不再调用 `autoUpdater`，不会请求自动更新元数据
-            - 更新弹窗改为读取最新 GitHub Release，直接列出 macOS / Windows 安装包；下载后覆盖安装即可完成更新
-            - 移除 `electron-updater` 依赖和多余的预加载脚本，减小安装包体积
-            - 覆盖安装不会清除账号、模型配置、会话和画册数据
+            - 对话附件：支持上传 txt / Markdown / CSV / JSON / Word (.docx) / Excel (.xlsx) / PPT (.pptx) / PDF；服务端提取文字后随消息进入上下文，可直接总结、分析或据此生成图片
+            - 会话文档：在对话中把会话整理成 Word / PDF 终稿，生成后进入「我的文档」，支持预览、下载和删除；默认生成 Word，只有明确要求 PDF 时才生成 PDF
+            - 会话导出 / 导入：导出为 `.luma-session.zip`，包含消息、附件文字和图片；导入后自动创建新会话并更换图片 ID，不覆盖现有会话
+
+            ### 改进
+
+            - 附件文字按预算截断并明确标注；Excel 按工作表和制表符分列输出，避免长表格撑爆上下文
+            - 文档生成先规划读者与章节，只收录最终确认的文字和图片；画册中移除的图片不会写入文档
+            - PDF 导出自动查找系统中文字体；Docker 镜像补充 fontconfig 与 Noto CJK
+            - 上传文档增加格式、扩展名、文件头和大小校验，失败时返回明确错误
+            - 会话导入校验 ZIP、manifest、图片签名和体积，重新映射图片、参考图与父子关系
+
+            ### 限制
+
+            - 扫描版 PDF 需要先 OCR；附件解析只使用可提取的文字
+            - 会话导出不包含原始附件文件，保留提取后的文字
+            - 单个会话文件上限 96MB，最多 1000 条消息、500 张图片
 
             ### 更新方式
 
@@ -139,9 +152,9 @@ jobs:
 
             | 平台 | 安装包 |
             | --- | --- |
-            | macOS Apple Silicon（M 系列） | `Luma-1.0.5-mac-arm64.dmg` |
-            | macOS Intel | `Luma-1.0.5-mac-x64.dmg` |
-            | Windows x64 | `Luma-1.0.5-win-x64.exe` |
+            | macOS Apple Silicon（M 系列） | `Luma-1.0.6-mac-arm64.dmg` |
+            | macOS Intel | `Luma-1.0.6-mac-x64.dmg` |
+            | Windows x64 | `Luma-1.0.6-win-x64.exe` |
 
             ### 安装说明
 

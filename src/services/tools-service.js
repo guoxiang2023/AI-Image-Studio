@@ -21,10 +21,12 @@ import { directImagePrompt, requestImage } from '../ai/llm.js';
 import { inferAspectRatio } from '../media/png.js';
 import { addQrToPng } from '../media/qr.js';
 import { findGalleryImage } from '../data/repositories/gallery.js';
+import { generateSessionDocument } from './document-service.js';
+import { saveGeneratedDocument } from './document-library-service.js';
 import { normalizeQr, normalizeRefIds } from '../domain/chat-options.js';
 import { canUseReferenceImages } from '../domain/image-capabilities.js';
 import { referencePromptBlock } from '../domain/image-references.js';
-import { clamp, clipText } from '../shared/utils.js';
+import { clamp, clipText, friendlyError } from '../shared/utils.js';
 
 async function optimizePrompt(ctx, draft, { aspectRatio, model, mode }) {
   if (!PROMPT_OPTIMIZE || !ctx.models?.llm?.apiKey) return draft;
@@ -370,8 +372,60 @@ async function editImage(args, ctx) {
   };
 }
 
+
+async function createDocument(args, ctx) {
+  const format = String(args?.format || '').toLowerCase() === 'pdf' ? 'pdf' : 'docx';
+  try {
+    ctx.emit({
+      type: 'status',
+      text: format === 'pdf' ? '正在分析素材并撰写 PDF 终稿…' : '正在分析素材并撰写 Word 终稿…',
+    });
+    const result = await generateSessionDocument(ctx.user, ctx.chat.id, {
+      signal: ctx.signal,
+      format,
+    });
+    const document = await saveGeneratedDocument({
+      userId: ctx.user.id,
+      chatId: ctx.chat.id,
+      title: result.title,
+      filename: result.filename,
+      format: result.format,
+      buffer: result.buffer,
+      imageCount: result.images,
+      preview: result.preview,
+    });
+    ctx.createdDocuments = (ctx.createdDocuments || 0) + 1;
+    ctx.emit({
+      type: 'document',
+      document: {
+        id: document.id,
+        title: document.title,
+        format: document.format,
+        size: document.size,
+        imageCount: document.imageCount,
+        createdAt: document.createdAt,
+      },
+    });
+    return {
+      ok: true,
+      document: {
+        id: document.id,
+        title: document.title,
+        format: document.format,
+        size: document.size,
+        image_count: document.imageCount,
+      },
+      note: '文档已生成，用户可在「我的文档」中查看和下载。',
+    };
+  } catch (err) {
+    if (ctx.signal?.aborted) throw err;
+    return { error: friendlyError(err) };
+  }
+}
+
 export async function runTool(name, args, ctx) {
   if (name === 'generate_image') return generateImages(args, ctx);
   if (name === 'edit_image') return editImage(args, ctx);
+  if (name === 'create_document') return createDocument(args, ctx);
   return { error: `未知工具 ${name}` };
 }

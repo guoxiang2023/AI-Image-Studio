@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Luma · AI Image Studio</title>
-    <link rel="stylesheet" href="/style.css?v=63" />
+    <link rel="stylesheet" href="/style.css?v=66" />
   </head>
   <body>
     <svg class="sprite" aria-hidden="true" focusable="false">
@@ -43,6 +43,10 @@
         <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
       </symbol>
       <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14" /></symbol>
+      <symbol id="i-document" viewBox="0 0 24 24">
+        <path d="M6 3h7l5 5v13H6z" />
+        <path d="M13 3v5h5M9 13h6M9 17h6" />
+      </symbol>
       <symbol id="i-wand" viewBox="0 0 24 24">
         <path d="M4 20L15.5 8.5" />
         <path d="M14.5 3.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9.9-2.1z" />
@@ -205,6 +209,11 @@
           <span>我的画册</span>
         </button>
 
+        <button class="nav-item" id="documentsNav">
+          <svg class="ico"><use href="#i-document" /></svg>
+          <span>我的文档</span>
+        </button>
+
         <button class="nav-item" id="studioNav">
           <svg class="ico"><use href="#i-template" /></svg>
           <span>运营物料</span>
@@ -212,8 +221,12 @@
 
         <div class="side-label session-label">
           <span id="sessionLabel">我的会话</span>
-          <button class="session-filter" id="archiveToggle" type="button">已归档</button>
+          <span class="session-label-actions">
+            <button class="session-filter session-import" id="sessionImportBtn" type="button" title="导入会话 ZIP">导入</button>
+            <button class="session-filter" id="archiveToggle" type="button">已归档</button>
+          </span>
         </div>
+        <input id="sessionImportInput" type="file" accept=".zip,application/zip" hidden />
         <div class="session-list" id="sessionList"></div>
 
         <div class="sidebar-foot">
@@ -307,8 +320,36 @@
           </div>
         </section>
 
+        <section class="gallery documents-view" id="documentsView" hidden>
+          <div class="gallery-inner">
+            <header class="gallery-head">
+              <div class="gallery-title-block">
+                <p class="eyebrow">MY DOCUMENTS</p>
+                <h1>我的文档 <span class="gallery-total" id="documentsTotal"></span></h1>
+                <p class="gallery-sub">在对话里让 Luma 整理文档，生成后会收进这里。</p>
+              </div>
+              <div class="gallery-head-actions">
+                <button class="ghost gallery-back" id="documentsBack">
+                  <svg class="ico"><use href="#i-arrow-left" /></svg>
+                  返回对话
+                </button>
+              </div>
+            </header>
+
+            <div class="documents-grid" id="documentsGrid"></div>
+
+            <div class="gallery-empty" id="documentsEmpty" hidden>
+              <div class="gallery-empty-mark"><svg class="ico"><use href="#i-document" /></svg></div>
+              <h2>还没有文档</h2>
+              <p>在对话里说“把这次内容整理成 Word 文档”，生成后会出现在这里。</p>
+              <button class="primary" id="documentsStart">去对话</button>
+            </div>
+          </div>
+        </section>
+
         <footer class="composer-wrap" id="composerWrap">
           <div class="composer">
+            <div class="ref-slot file-slot" id="attachmentSlot" hidden></div>
             <div class="ref-slot" id="refSlot" hidden></div>
             <div class="composer-toolbar">
               <button type="button" class="tool-chip" id="templateBtn">
@@ -374,13 +415,13 @@
               </div>
             </div>
             <div class="composer-main">
-              <button class="icon-btn attach" id="attachBtn" aria-label="上传或粘贴参考图" title="上传或粘贴参考图">
+              <button class="icon-btn attach" id="attachBtn" aria-label="上传参考图或文档" title="上传参考图或文档">
                 <svg class="ico"><use href="#i-plus" /></svg>
               </button>
               <textarea
                 id="input"
                 rows="1"
-                placeholder="描述你想生成的画面，或直接输入问题…"
+                placeholder="描述你想生成的画面，或上传文档后提问…"
               ></textarea>
               <button class="send" id="sendBtn" aria-label="发送" disabled>
                 <svg class="ico ico-send"><use href="#i-arrow-up" /></svg>
@@ -388,7 +429,7 @@
               </button>
             </div>
           </div>
-          <div class="hint"><span>Enter 发送</span><span class="sep">·</span><span>Shift + Enter 换行</span><span class="sep">·</span><span>支持粘贴图片</span><span class="sep">·</span><span>最多 4 张参考图</span></div>
+          <div class="hint"><span>Enter 发送</span><span class="sep">·</span><span>Shift + Enter 换行</span><span class="sep">·</span><span>支持图片和文档</span><span class="sep">·</span><span>图片/文档各最多 4 个</span></div>
         </footer>
       </main>
     </div>
@@ -1023,9 +1064,28 @@
       </div>
     </div>
 
-    <div class="toast" id="toast" hidden></div>
-    <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp" multiple hidden />
 
-    <script type="module" src="/js/app.js?v=61"></script>
+    <div class="modal-backdrop" id="documentModal" hidden>
+      <div class="modal document-modal" role="dialog" aria-modal="true" aria-labelledby="documentModalTitle">
+        <div class="modal-head">
+          <div>
+            <p class="modal-eyebrow">DOCUMENT</p>
+            <h2 id="documentModalTitle">文档</h2>
+          </div>
+          <button class="icon-btn" id="closeDocumentModal" type="button" aria-label="关闭" title="关闭">×</button>
+        </div>
+        <div class="document-preview-meta" id="documentModalMeta"></div>
+        <div class="modal-body document-preview" id="documentModalBody"></div>
+        <div class="modal-foot">
+          <a class="primary" id="documentDownload" download>下载</a>
+          <a class="ghost" id="documentOpenPdf" target="_blank" rel="noopener noreferrer" hidden>打开 PDF</a>
+          <button class="ghost" id="closeDocumentModal2" type="button">关闭</button>
+        </div>
+      </div>
+    </div>
+    <div class="toast" id="toast" hidden></div>
+    <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp,.txt,.md,.markdown,.csv,.tsv,.json,.jsonl,.log,.xml,.yml,.yaml,.html,.htm,.docx,.xlsx,.pptx,.pdf" multiple hidden />
+
+    <script type="module" src="/js/app.js?v=65"></script>
   </body>
 </html>

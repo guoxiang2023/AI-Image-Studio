@@ -200,6 +200,20 @@ function createUserMessage(message) {
     node.appendChild(img);
     bubble.appendChild(node);
   }
+  const attachments = Array.isArray(message.attachments) ? message.attachments : [];
+  if (attachments.length) {
+    const files = el('div', 'user-files');
+    for (const attachment of attachments) {
+      const node = el('span', 'user-file');
+      node.title = `${attachment.name || '附件'}${
+        attachment.chars ? ` · ${attachment.chars} 字符` : ''
+      }`;
+      node.appendChild(el('span', 'user-file-ext', String(attachment.ext || '').toUpperCase()));
+      node.appendChild(el('span', 'user-file-name', attachment.name || '附件'));
+      files.appendChild(node);
+    }
+    bubble.appendChild(files);
+  }
   body.appendChild(bubble);
   wrap.appendChild(body);
 

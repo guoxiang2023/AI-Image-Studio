@@ -43,6 +43,7 @@ src/
     static.js                     # Web 静态资源和图片文件
     routes/                       # 只做 HTTP 适配
       marketing.js                # 运营物料模板/预览/生成
+      documents.js                # 我的文档列表/预览/下载/删除
   auth/
     crypto.js                     # scrypt、Token、SecretBox
     session-service.js            # Session 签发、Cookie、当前用户
@@ -53,6 +54,9 @@ src/
     agent-service.js              # LLM 工具调用循环
     tools-service.js              # generate_image / edit_image
     summary-service.js            # 会话摘要压缩
+    document-service.js           # 会话整理为 Word/PDF 内容并嵌入图片
+    document-library-service.js   # 生成文档的落盘、列表、预览和删除
+    session-transfer-service.js   # 会话 ZIP 导出、校验、导入与图片 ID 重映射
     model-settings-service.js     # 模型配置读取/加密/脱敏
     model-probe-service.js        # 模型列表和连通性测试
     marketing-service.js           # 运营物料预览、渲染、画册登记
@@ -63,6 +67,7 @@ src/
     repositories/                 # 按聚合拆分的 SQL
   domain/
     chat.js                       # 会话文档、LLM 历史、客户端视图
+    document.js                   # 文档主题提示词、Markdown 解析、图片补齐
     chat-options.js               # 画幅/数量/参考图/标签校验
     image-capabilities.js         # 图片模型能力与安全回退
     image-references.js           # 参考图角色、风格隔离与重绘规则
@@ -75,6 +80,12 @@ src/
     prompts.js                    # 系统提示词和工具 Schema
   media/
     image-storage.js              # 文件路径、读写、尺寸探测
+    document-storage.js           # 上传文档与提取文本的存储
+    document-text.js              # txt / docx / xlsx / pptx / pdf 文字提取
+    docx.js                       # WordprocessingML 与图片嵌入
+    pdf.js                        # A4 PDF 排版、中文字体与图片嵌入
+    zip-reader.js                 # OpenXML 压缩包的最小 ZIP 读取器
+    zip-writer.js                 # 生成 DOCX 的最小 ZIP 写入器
     png.js                        # PNG 编码/解码/比例填充
     qr.js                         # 链接二维码生成与像素合成
   shared/
@@ -109,8 +120,9 @@ req
 ```text
 POST /api/chat
   -> chat-turn-service.prepareChatTurn
-       校验消息/模型配置/参考图/生成参数
+       校验消息/模型配置/参考图/附件/生成参数
        加载或创建会话
+       读取附件提取文本（消息中保留元数据，LLM 历史带正文）
   -> route 建立 SSE、AbortController、心跳
   -> chat-turn-service.runPreparedTurn
        session 事件
@@ -122,6 +134,40 @@ POST /api/chat
 ```
 
 SSE 生命周期留在 `http`；会话保存、摘要、工具编排留在 `services`。
+
+## 生成 Word / PDF 文档
+
+```text
+用户在对话中要求“整理成文档”（默认 Word；明确说 PDF 才生成 PDF）
+  -> agent-service 调用 create_document 工具
+       document-service.generateSessionDocument
+         读取会话；排除画册中已移除、文件失效、被后续编辑替换的图片
+         第一次模型调用只做终稿策划：文档类型、读者、章节逻辑、终稿图片
+         第二次模型调用按策划重写 Markdown，只引用策划确认的终稿图片
+         解析 Markdown，过滤清单外/重复图片，不自动补入未选图片
+         sharp 统一转 JPEG，docx.js 生成 DOCX 或 pdf.js 生成 A4 PDF
+       document-library-service.saveGeneratedDocument
+         写入 generated_documents 表 + 用户文档文件
+  -> SSE document 事件，提示用户到「我的文档」查看
+
+GET /api/documents               # 列表
+GET /api/documents/:id           # 预览数据（标题、正文块、图片 URL）
+GET /api/documents/:id/download  # 下载附件
+GET /api/documents/:id/file      # PDF 内联查看
+DELETE /api/documents/:id        # 删除
+```
+
+策划失败、策划 JSON 无效或编排失败时直接报错：不会改用未筛选候选图，也不会把聊天记录排版成半成品文档。PDF 会自动查找系统 CJK 字体，也可用 `DOCUMENT_PDF_FONT` 指定。
+
+## 会话导出 / 导入
+
+```text
+GET  /api/sessions/:id/export  -> .luma-session.zip
+       manifest.json + images/<旧图片 ID>.<ext>
+POST /api/sessions/import      -> 新会话 ID
+```
+
+导出只携带会话实际引用的图片；导入时校验 ZIP、manifest 和图片签名，保存为新图片文件并生成新 ID，重写消息里的图片、参考图和 `lastImageId`。附件文字随消息保存，原附件文件不进入 ZIP；摘要会重置，避免旧摘要污染新会话。单个会话文件上限 96MB。
 
 ## 前端分层
 

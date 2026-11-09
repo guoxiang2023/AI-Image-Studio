@@ -26,6 +26,12 @@ import {
   listGalleryImages,
   setGalleryImageFavorite,
 } from '../src/data/repositories/gallery.js';
+import {
+  deleteGeneratedDocument,
+  getGeneratedDocument,
+  insertGeneratedDocument,
+  listGeneratedDocuments,
+} from '../src/data/repositories/documents.js';
 
 let dataDir;
 
@@ -115,4 +121,41 @@ test('skill schema and chat column are removed', () => {
   assert.equal(table, undefined);
   const columns = db.prepare('PRAGMA table_info(chats)').all();
   assert.equal(columns.some((column) => column.name === 'skill_id'), false);
+});
+
+test('generated document repository round-trips metadata and preview', () => {
+  const id = 'd'.repeat(24);
+  insertChat({
+    id: 'c-doc',
+    userId: 'u1',
+    title: '文档会话',
+    createdAt: 1,
+    updatedAt: 1,
+    lastImageId: null,
+    coverUrl: null,
+    messagesJson: '[]',
+    summary: '',
+    summaryUpto: 0,
+  });
+  insertGeneratedDocument({
+    id,
+    userId: 'u1',
+    chatId: 'c-doc',
+    title: '夜跑海报报告',
+    filename: '夜跑海报报告.pdf',
+    format: 'pdf',
+    size: 1024,
+    imageCount: 2,
+    previewJson: '[{"type":"heading","text":"过程"}]',
+    createdAt: 10,
+  });
+  const listed = listGeneratedDocuments('u1');
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0].title, '夜跑海报报告');
+  assert.equal(listed[0].chat_title, '文档会话');
+  const document = getGeneratedDocument('u1', id);
+  assert.equal(document.format, 'pdf');
+  assert.match(document.preview_json, /过程/);
+  assert.equal(deleteGeneratedDocument('u1', id), true);
+  assert.equal(listGeneratedDocuments('u1').length, 0);
 });

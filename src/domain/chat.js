@@ -82,6 +82,24 @@ export function serializeChat(chat) {
   };
 }
 
+function attachmentPromptBlocks(message) {
+  const list = (Array.isArray(message.attachments) ? message.attachments : []).filter(
+    (attachment) => attachment?.id,
+  );
+  if (!list.length) return '';
+  return list
+    .map((attachment, index) =>
+      [
+        `[附件 ${index + 1}：${attachment.name || '未命名'}（${
+          attachment.kind || attachment.ext || '文件'
+        }${attachment.chars ? `，共 ${attachment.chars} 字符` : ''}）]`,
+        String(attachment.text || '（内容不可用）'),
+        `[附件 ${index + 1} 结束]`,
+      ].join('\n'),
+    )
+    .join('\n\n');
+}
+
 export function chatToClient(chat) {
   return {
     id: chat.id,
@@ -92,9 +110,15 @@ export function chatToClient(chat) {
     summary: chat.summary || '',
     summaryUpto: chat.summaryUpto || 0,
     archivedAt: chat.archivedAt || null,
-    messages: chat.messages.filter(
-      (message) => !(message.draft && !message.content && !(message.images?.length)),
-    ),
+    messages: chat.messages
+      .filter((message) => !(message.draft && !message.content && !(message.images?.length)))
+      .map((message) => {
+        if (!Array.isArray(message.attachments) || !message.attachments.length) return message;
+        return {
+          ...message,
+          attachments: message.attachments.map(({ text, ...rest }) => rest),
+        };
+      }),
   };
 }
 
@@ -117,6 +141,8 @@ export function toLlmHistory(chat) {
       } else if (message.referenceImageId) {
         content += `\n[参考图 image_id=${message.referenceImageId}]`;
       }
+      const attachmentBlock = attachmentPromptBlocks(message);
+      if (attachmentBlock) content = content ? `${content}\n\n${attachmentBlock}` : attachmentBlock;
       rows.push({ role: 'user', content });
     } else if (message.role === 'assistant') {
       const parts = [];

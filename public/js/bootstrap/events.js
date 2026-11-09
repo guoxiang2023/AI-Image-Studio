@@ -13,6 +13,7 @@ import {
 } from '../features/auth.js';
 import {
   compactSession,
+  importSessionFile,
   newChatView,
   restoreSession,
   toggleSessionFilter,
@@ -27,6 +28,11 @@ import {
   submitFolder,
   submitTags,
 } from '../features/gallery.js';
+import {
+  closeDocumentPreview,
+  documentsGoBack,
+  openDocuments,
+} from '../features/documents.js';
 import { handlePaste, uploadFiles } from '../features/reference.js';
 import {
   activateProvider,
@@ -94,6 +100,11 @@ export function bindEvents() {
   els.sendBtn.addEventListener('click', send);
   els.newChat.addEventListener('click', newChatView);
   els.archiveToggle.addEventListener('click', toggleSessionFilter);
+  els.sessionImportBtn.addEventListener('click', () => els.sessionImportInput.click());
+  els.sessionImportInput.addEventListener('change', () => {
+    const file = els.sessionImportInput.files?.[0];
+    if (file) importSessionFile(file);
+  });
   els.compactBtn.addEventListener('click', compactSession);
   els.restoreArchived.addEventListener('click', () => {
     if (state.sessionId) restoreSession(state.sessionId);
@@ -180,6 +191,14 @@ export function bindEvents() {
   els.sidebarScrim.addEventListener('click', closeSidebar);
 
   els.galleryNav.addEventListener('click', openGallery);
+  els.documentsNav.addEventListener('click', openDocuments);
+  els.documentsBack.addEventListener('click', documentsGoBack);
+  els.documentsStart.addEventListener('click', documentsGoBack);
+  els.closeDocumentModal.addEventListener('click', closeDocumentPreview);
+  els.closeDocumentModal2.addEventListener('click', closeDocumentPreview);
+  els.documentModal.addEventListener('click', (event) => {
+    if (event.target === els.documentModal) closeDocumentPreview();
+  });
   els.galleryBack.addEventListener('click', backToChat);
   els.galleryStart.addEventListener('click', newChatView);
   els.gallerySearch.addEventListener('input', () => {
@@ -340,6 +359,7 @@ export function bindEvents() {
     else if (!els.promptModal.hidden) closePromptModal();
     else if (!els.compareModal.hidden) closeCompare();
     else if (!els.updateModal.hidden) closeUpdateModal();
+    else if (!els.documentModal.hidden) closeDocumentPreview();
     else if (!els.paramPanel.hidden) closeParams();
     else closeSidebar();
   });

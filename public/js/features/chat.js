@@ -5,9 +5,11 @@ import {
   scrollBottom,
   setTitle,
   state,
+  toast,
   updateSendButton,
 } from '../core/index.js';
 import { createAssistantShell, createUserMessage, prependSummaryNote } from './messages.js';
+import { clearAttachments } from './attachments.js';
 import { clearReference } from './reference.js';
 import { markActiveSession, refreshSessions, setSessionInUrl } from './sessions.js';
 import { abortStream } from './stream.js';
@@ -20,10 +22,11 @@ export async function send() {
   }
 
   const text = els.input.value.trim();
-  if (!text) return;
+  if (!text && !state.references.length && !state.attachments.length) return;
 
   const seq = ++state.streamSeq;
   const references = state.references.map((ref) => ({ ...ref }));
+  const attachments = state.attachments.map((attachment) => ({ ...attachment }));
   const userMessage = {
     role: 'user',
     content: text,
@@ -34,6 +37,7 @@ export async function send() {
           referenceUrl: references[0].url,
         }
       : {}),
+    ...(attachments.length ? { attachments } : {}),
   };
   state.messages.push(userMessage);
   if (els.messages.classList.contains('is-empty')) {
@@ -45,6 +49,7 @@ export async function send() {
   els.input.value = '';
   autoGrow();
   clearReference();
+  clearAttachments();
   state.streaming = true;
   updateSendButton();
   scrollBottom();
@@ -90,6 +95,9 @@ export async function send() {
     } else if (event.type === 'text') {
       assistantMessage.content = event.text;
       shell.setText(event.text);
+    } else if (event.type === 'document') {
+      const document = event.document || {};
+      toast(`文档已生成：${document.title || 'Luma 文档'}，可在「我的文档」查看`);
     } else if (event.type === 'summary') {
       state.summary = event.summary || '';
       state.summaryUpto = event.upto || 0;
@@ -117,6 +125,7 @@ export async function send() {
               referenceRoles: references.map((ref) => ref.role || '参考'),
             }
           : {}),
+        ...(attachments.length ? { attachmentIds: attachments.map((item) => item.id) } : {}),
         options: state.options,
       }),
       signal: controller.signal,

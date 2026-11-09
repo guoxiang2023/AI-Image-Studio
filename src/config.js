@@ -26,6 +26,34 @@ export const SESSION_MS = 7 * 24 * 60 * 60 * 1000;
 export const COOKIE_NAME = 'luma_session';
 
 export const IMAGE_TIMEOUT = Number(process.env.IMAGE_TIMEOUT_SECONDS || 240);
+export const DOCUMENT_MAX_BYTES = Math.max(
+  1024,
+  Number(process.env.DOCUMENT_MAX_BYTES || 10 * 1024 * 1024),
+);
+export const DOCUMENT_MAX_CHARS = Math.max(
+  1000,
+  Number(process.env.DOCUMENT_MAX_CHARS || 120000),
+);
+export const DOCUMENT_MAX_IMAGES = Math.max(
+  1,
+  Number(process.env.DOCUMENT_MAX_IMAGES || 60),
+);
+export const DOCUMENT_TRANSCRIPT_CHARS = Math.max(
+  4000,
+  Number(process.env.DOCUMENT_TRANSCRIPT_CHARS || 14000),
+);
+export const DOCUMENT_TIMEOUT = Math.max(
+  20,
+  Number(process.env.DOCUMENT_TIMEOUT_SECONDS || 180),
+);
+export const DOC_ATTACHMENT_CHARS = Math.max(
+  1000,
+  Number(process.env.DOC_ATTACHMENT_CHARS || 12000),
+);
+export const DOC_ATTACHMENT_TOTAL = Math.max(
+  DOC_ATTACHMENT_CHARS,
+  Number(process.env.DOC_ATTACHMENT_TOTAL || 36000),
+);
 export const LLM_TIMEOUT = Math.max(10, Number(process.env.LLM_TIMEOUT_SECONDS || 300));
 export const LLM_STREAM_IDLE_TIMEOUT = Math.max(
   10,

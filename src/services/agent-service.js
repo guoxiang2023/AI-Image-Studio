@@ -101,7 +101,11 @@ export async function runAgent(ctx) {
   }
 
   if (!text) {
-    text = ctx.turnImages.length ? '图片已生成。' : '抱歉，我没有理解你的需求，可以换个说法再试一次。';
+    text = ctx.createdDocuments
+      ? '文档已生成，可在「我的文档」中查看和下载。'
+      : ctx.turnImages.length
+        ? '图片已生成。'
+        : '抱歉，我没有理解你的需求，可以换个说法再试一次。';
   }
   return { text };
 }

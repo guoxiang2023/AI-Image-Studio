@@ -5,6 +5,9 @@
 ## 功能
 
 - 自然对话、流式回复与 Markdown 渲染
+- 对话支持上传 txt / Markdown / CSV / JSON / Word (.docx) / Excel (.xlsx) / PPT (.pptx) / PDF 文档；服务端提取文字后随消息进入上下文，可直接总结、分析或据此生成图片（扫描版 PDF 需先 OCR）
+- 在对话中让 Luma 把会话整理成可直接评审的 Word / PDF 终稿，生成后收进「我的文档」并可查看、下载；默认生成 Word，只有明确要求 PDF 时才生成 PDF；生成前先规划文档结构，只收录最终确认的文字和图片，画册中移除的图片与编辑过程稿不会进入文档
+- 会话导出 / 导入：导出为 `.luma-session.zip`，包含消息、附件文字和图片；导入后创建新会话并自动更换图片 ID，不覆盖现有会话；单个文件上限 96MB
 - 流式回复中断或刷新页面后保留已生成的部分内容
 - 多轮图片生成与基于参考图的修改
 - 风格参考图生成：风格图只影响画风，不污染主体、构图和文字
@@ -76,7 +79,7 @@ src/
   domain/          纯业务模型与校验
   ai/              LLM 客户端与提示词
   studio/          内置 AI 参考图库
-  media/           图片文件存储、PNG 处理
+  media/           图片/文档存储、文字提取、DOCX/PDF 处理
   shared/          通用工具、错误、限流、Cookie
 public/js/
   core/            状态、DOM、API、主题、通用 UI
@@ -109,6 +112,15 @@ npm test
 | `COOKIE_SECURE` | `0` | HTTPS 下设为 `1` |
 | `TRUST_PROXY` | `0` | 反向代理后设为 `1` |
 | `PROMPT_OPTIMIZE` | `1` | 是否优化图片提示词 |
+| `DOCUMENT_MAX_BYTES` | `10485760` | 单个上传文档大小上限（10MB） |
+| `DOCUMENT_MAX_CHARS` | `120000` | 单个文档提取文字上限 |
+| `DOC_ATTACHMENT_CHARS` | `12000` | 每次送进上下文的单附件文字预算 |
+| `DOC_ATTACHMENT_TOTAL` | `36000` | 每次送进上下文的全部附件文字预算 |
+| `DOCUMENT_MAX_IMAGES` | `60` | 文档候选终稿图片上限；先排除废弃、失效和被后续编辑替换的图片，再保留最近图片 |
+| `DOCUMENT_TRANSCRIPT_CHARS` | `14000` | 生成文档时送给模型的对话记录上限 |
+| `DOCUMENT_TIMEOUT_SECONDS` | `180` | 文档策划与终稿编排的总超时；失败时不会生成半成品 |
+| `DOCUMENT_PDF_FONT` | 空 | PDF 中文字体路径（.ttf/.otf/.ttc）；留空自动查找系统 Noto / 冬青黑体 / 微软雅黑 |
+| `DOCUMENT_PDF_FONT_FAMILY` | 空 | 自定义 .ttc 字体集合中的 PostScript 名称，例如 `NotoSansCJKsc-Regular` |
 | `LLM_TIMEOUT_SECONDS` | `300` | 非流式对话请求总超时 |
 | `LLM_STREAM_IDLE_TIMEOUT_SECONDS` | `120` | 流式回复无数据时的空闲超时，收到新内容会重置 |
 | `UPDATE_REPO` | `guoxiang2023/AI-Image-Studio` | GitHub 仓库（`owner/repo`），用于检查 Release |

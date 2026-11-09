@@ -301,7 +301,7 @@ async function submitTags() {
 }
 
 async function hideGalleryImage(image) {
-  if (!confirm('从画册移除这张图片？对话里的记录不会删除。')) return;
+  if (!confirm('从画册移除这张图片？对话记录会保留，但不会写入后续生成的文档。')) return;
   try {
     await api(`/api/gallery/images/${image.id}`, { method: 'DELETE' });
     state.gallery.images = state.gallery.images.filter((item) => item.id !== image.id);
@@ -400,10 +400,12 @@ export async function openGallery() {
   els.chatScroll.hidden = true;
   els.composerWrap.hidden = true;
   els.archiveBanner.hidden = true;
+  els.documentsView.hidden = true;
   els.galleryView.hidden = false;
   els.topbarLabel.textContent = 'GALLERY';
   els.chatTitle.textContent = '我的画册';
   els.galleryNav.classList.add('active');
+  els.documentsNav.classList.remove('active');
   els.galleryLive.hidden = !state.streaming;
   els.gallerySearch.value = state.gallery.query;
   closeParams();

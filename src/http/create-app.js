@@ -21,13 +21,25 @@ import {
   handleHideImage,
   handleUpdateImage,
 } from './routes/gallery.js';
-import { handleListSessions, handleSession, handleCompactSession } from './routes/sessions.js';
+import {
+  handleExportSession,
+  handleImportSession,
+  handleListSessions,
+  handleSession,
+  handleCompactSession,
+} from './routes/sessions.js';
+import {
+  handleDocument,
+  handleDocumentDownload,
+  handleDocumentFile,
+  handleListDocuments,
+} from './routes/documents.js';
 import {
   handleStyleGenerate,
   handleStyleImport,
   handleStyleReferences,
 } from './routes/studio.js';
-import { handleUpload } from './routes/upload.js';
+import { handleDocumentUpload, handleUpload } from './routes/upload.js';
 import { handleUsage } from './routes/usage.js';
 import { handleVersion } from './routes/version.js';
 import { serveImageFile, serveStatic } from './static.js';
@@ -63,6 +75,12 @@ function buildRouter() {
   );
 
   router.get('/api/sessions', ({ req, res, user }) => handleListSessions(req, res, user));
+  router.post('/api/sessions/import', ({ req, res, user }) =>
+    handleImportSession(req, res, user),
+  );
+  router.get('/api/sessions/:id/export', ({ req, res, user, params }) =>
+    handleExportSession(req, res, user, params.id),
+  );
   router.get('/api/sessions/:id', ({ req, res, user, params }) =>
     handleSession(req, res, user, params.id),
   );
@@ -76,6 +94,20 @@ function buildRouter() {
     handleSession(req, res, user, params.id),
   );
 
+  router.get('/api/documents', ({ req, res, user }) => handleListDocuments(req, res, user));
+  router.get('/api/documents/:id/download', ({ req, res, user, params }) =>
+    handleDocumentDownload(req, res, user, params.id),
+  );
+  router.get('/api/documents/:id/file', ({ req, res, user, params }) =>
+    handleDocumentFile(req, res, user, params.id),
+  );
+  router.get('/api/documents/:id', ({ req, res, user, params }) =>
+    handleDocument(req, res, user, params.id),
+  );
+  router.delete('/api/documents/:id', ({ req, res, user, params }) =>
+    handleDocument(req, res, user, params.id),
+  );
+
   router.get('/api/studio/references', ({ req, res, user }) =>
     handleStyleReferences(req, res, user),
   );
@@ -86,6 +118,9 @@ function buildRouter() {
     handleStyleGenerate(req, res, user),
   );
   router.post('/api/upload', ({ req, res, user }) => handleUpload(req, res, user));
+  router.post('/api/upload/document', ({ req, res, user }) =>
+    handleDocumentUpload(req, res, user),
+  );
   router.post('/api/chat', ({ req, res, user }) => handleChat(req, res, user));
   router.get('/files/:name', ({ res, user, params }) =>
     serveImageFile(res, user.id, params.name),

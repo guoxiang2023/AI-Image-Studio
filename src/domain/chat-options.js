@@ -1,16 +1,24 @@
 import { IMAGE_QUALITIES, RATIO_SIZE, REFERENCE_ROLES } from '../config.js';
 import { clamp } from '../shared/utils.js';
 
-export function normalizeRefIds(raw) {
+function normalizeIds(raw, max) {
   const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
   const out = [];
   for (const value of list) {
     const id = String(value || '');
     if (!/^[a-f0-9]{16,40}$/.test(id) || out.includes(id)) continue;
     out.push(id);
-    if (out.length >= 4) break;
+    if (out.length >= max) break;
   }
   return out;
+}
+
+export function normalizeRefIds(raw) {
+  return normalizeIds(raw, 4);
+}
+
+export function normalizeAttachmentIds(raw) {
+  return normalizeIds(raw, 4);
 }
 
 export function normalizeRefRoles(raw, count) {

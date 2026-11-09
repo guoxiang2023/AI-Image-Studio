@@ -1,6 +1,6 @@
 {
   "name": "luma-image-agent",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "private": true,
   "type": "module",
   "description": "Luma · 对话式 AI 与图片创作智能体",
@@ -73,10 +73,13 @@
     "afterPack": "desktop/after-pack.cjs",
     "asarUnpack": [
       "node_modules/sharp/**/*",
-      "node_modules/@img/**/*"
+      "node_modules/@img/**/*",
+      "node_modules/pdfjs-dist/**/*"
     ]
   },
   "dependencies": {
+    "pdfjs-dist": "^4.10.38",
+    "pdfkit": "^0.20.2",
     "qrcode-generator": "^2.0.4",
     "sharp": "^0.35.5"
   }
