@@ -5,7 +5,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
-test('malformed document plan fails closed without saving a document', async (t) => {
+test('malformed document plan falls back and still produces a document', async (t) => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), 'luma-doc-plan-'));
   process.env.DATA_DIR = dataDir;
 
@@ -29,6 +29,7 @@ test('malformed document plan fails closed without saving a document', async (t)
 
   let requests = 0;
   let lastRequest = null;
+  const budgets = [];
   const llm = http.createServer((req, res) => {
     requests += 1;
     const chunks = [];
@@ -36,6 +37,7 @@ test('malformed document plan fails closed without saving a document', async (t)
     req.on('end', () => {
       try {
         lastRequest = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        budgets.push(Number(lastRequest?.max_tokens) || 0);
       } catch {
         lastRequest = null;
       }
@@ -109,11 +111,11 @@ test('malformed document plan fails closed without saving a document', async (t)
     emit() {},
   });
 
-  assert.match(result.error, /文档策划失败/);
-  assert.equal(requests, 1, 'composition must not run after an unusable plan');
+  assert.equal(result.error, undefined);
+  assert.ok(requests > 1, 'composition must still run after a failed plan');
   assert.ok(
-    lastRequest?.max_tokens >= 12000,
-    'plan output budget must cover hidden reasoning plus the JSON plan',
+    budgets[0] <= 2048,
+    'the outline request must fit inside a conservative output budget',
   );
-  assert.deepEqual(listUserDocuments(userId), []);
+  assert.equal(listUserDocuments(userId).length, 1);
 });

@@ -1,11 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildDocumentImagePlanMessages,
   buildDocumentMessages,
+  buildDocumentBriefMessages,
+  buildDocumentContextChunks,
+  buildDocumentMergeMessages,
   buildDocumentPlanMessages,
+  buildFallbackDocumentPlan,
+  buildSectionTranscript,
   buildTranscript,
   collectDocumentImages,
   finalizeDocument,
+  parseDocumentImagePlan,
   parseDocumentMarkdown,
   parseDocumentPlan,
   selectFinalDocumentImages,
@@ -66,6 +73,27 @@ test('parses headings, paragraphs, lists, quotes, and image lines', () => {
   assert.equal(fenced.blocks[0].text, '正文');
 });
 
+test('parses Markdown tables into structured blocks', () => {
+  const parsed = parseDocumentMarkdown(`# 数据字典
+
+## 任务表 wcs_task
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| task_id | varchar(32) | Y | 主键 |
+| status | smallint | Y | 状态 |
+
+索引：uk_task(task_id)。`);
+
+  assert.equal(parsed.blocks[0].type, 'heading');
+  const table = parsed.blocks.find((block) => block.type === 'table');
+  assert.deepEqual(table.headers, ['字段', '类型', '必填', '说明']);
+  assert.deepEqual(table.rows, [
+    ['task_id', 'varchar(32)', 'Y', '主键'],
+    ['status', 'smallint', 'Y', '状态'],
+  ]);
+});
+
 test('finalizes images: drops unknown/duplicate IDs and never appends unselected images', () => {
   const images = [
     { id: ID_A, prompt: 'morning light', caption: '清晨', aspectRatio: '1:1' },
@@ -95,7 +123,7 @@ test('finalizes images: drops unknown/duplicate IDs and never appends unselected
 test('builds a DOCX with embedded image XML, rels, and media', () => {
   const buffer = buildDocx({
     title: '测试文档',
-    meta: '由 Luma 整理',
+    meta: '终稿 · 测试',
     blocks: [
       { type: 'heading', level: 2, text: '章节' },
       { type: 'paragraph', text: '正文 **加粗**' },
@@ -104,6 +132,7 @@ test('builds a DOCX with embedded image XML, rels, and media', () => {
   });
   const zip = openZip(buffer);
   const document = zip.readText('word/document.xml');
+  const core = zip.readText('docProps/core.xml');
   const rels = zip.readText('word/_rels/document.xml.rels');
   const types = zip.readText('[Content_Types].xml');
 
@@ -111,6 +140,8 @@ test('builds a DOCX with embedded image XML, rels, and media', () => {
   assert.match(document, /r:embed="rIdImg1"/);
   assert.match(document, /<wp:extent cx="\d+" cy="\d+"\/>/);
   assert.match(document, /图注/);
+  assert.doesNotMatch(document, /Luma/i);
+  assert.doesNotMatch(core, /Luma/i);
   assert.match(rels, /Target="media\/image1\.jpeg"/);
   assert.match(types, /image\/jpeg/);
   assert.deepEqual(zip.read('word/media/image1.jpeg'), PNG);
@@ -156,6 +187,27 @@ test('selects only final deliverable images', () => {
   );
 });
 
+test('drops superseded diagram revisions even without parentId', () => {
+  const selected = selectFinalDocumentImages([
+    { id: ID_A, prompt: 'A technical architecture diagram, generic layers' },
+    { id: ID_B, prompt: 'Redraw the exact same technical architecture diagram in Chinese' },
+    { id: ID_C, prompt: 'Keep the layout and structure but replace every layer with concrete technology' },
+  ]);
+  assert.deepEqual(
+    selected.map((image) => image.id),
+    [ID_C],
+  );
+
+  const separate = selectFinalDocumentImages([
+    { id: ID_A, prompt: 'A deployment architecture diagram with three network zones' },
+    { id: ID_B, prompt: 'A disaster-recovery sequence diagram matching the reference image style' },
+  ]);
+  assert.deepEqual(
+    separate.map((image) => image.id),
+    [ID_A, ID_B],
+  );
+});
+
 test('collects unique images in order and keeps the newest when limited', () => {
   const chat = {
     messages: [
@@ -176,7 +228,37 @@ test('collects unique images in order and keeps the newest when limited', () => 
   assert.equal(latest.omitted, 1);
 });
 
-test('transcript keeps the summary and newest messages under the limit', () => {
+test('transcript strips generation-process chatter from assistant text', () => {
+  const text = buildTranscript({
+    messages: [
+      { role: 'user', content: '生成完整数据字典' },
+      {
+        role: 'assistant',
+        content:
+          '这次已成功生成 PDF，5 张核心配图已排入。\n| 字段 | 类型 |\n| task_id | varchar |\n需要的话，我可以补充逐图导读和评审问题清单。',
+      },
+    ],
+  }, 40000);
+  assert.doesNotMatch(text, /PDF|核心配图|逐图|评审问题清单/);
+  assert.match(text, /task_id/);
+});
+
+test('transcript includes messages before the rolling summary cutoff', () => {
+  const text = buildTranscript({
+    summary: '早期摘要',
+    summaryUpto: 2,
+    messages: [
+      { role: 'user', content: '架构图需求' },
+      { role: 'assistant', content: '技术架构图' },
+      { role: 'user', content: '最新要求：完整数据字典' },
+    ],
+  }, 40000);
+  assert.match(text, /架构图需求/);
+  assert.match(text, /技术架构图/);
+  assert.match(text, /完整数据字典/);
+});
+
+test('transcript prioritizes newest messages and ignores stale summaries', () => {
   const chat = {
     summary: '早期摘要',
     summaryUpto: 0,
@@ -187,9 +269,70 @@ test('transcript keeps the summary and newest messages under the limit', () => {
     ],
   };
   const text = buildTranscript(chat, 400);
-  assert.match(text, /早期摘要/);
+  assert.doesNotMatch(text, /早期摘要/);
   assert.match(text, /最后的问题/);
   assert.match(text, /较早的 \d+ 条对话已省略/);
+});
+
+test('falls back to a deterministic outline and bounded chapter evidence', () => {
+  const chat = {
+    title: 'WCS 概要设计',
+    messages: [
+      { role: 'user', content: '先做架构图' },
+      { role: 'assistant', content: '技术架构说明 '.repeat(900) },
+      {
+        role: 'assistant',
+        content:
+          '#### 8.2 任务表 wcs_task\n| 字段 | 类型 | 说明 |\n|---|---|---|\n| task_id | varchar(32) | 主键 |\n| status | smallint | 状态 |',
+      },
+      { role: 'user', content: '最终确认数据字典' },
+    ],
+  };
+  const plan = buildFallbackDocumentPlan(chat);
+  assert.equal(plan.sections.length, 9);
+  assert.match(plan.sections[7].heading, /数据库设计/);
+  assert.equal(plan.fallback, true);
+
+  const context = buildSectionTranscript(
+    chat,
+    { heading: '数据库设计：完整数据字典、字段、索引' },
+    2000,
+  );
+  assert.match(context, /wcs_task/);
+  assert.match(context, /task_id/);
+  assert.ok(context.length <= 2100);
+});
+
+test('chunks the whole conversation for semantic summarization', () => {
+  const chat = {
+    messages: [
+      { role: 'user', content: '早期需求'.repeat(300) },
+      { role: 'assistant', content: '中间讨论'.repeat(300) },
+      { role: 'user', content: '最新需求'.repeat(300) },
+    ],
+  };
+  const chunks = buildDocumentContextChunks(chat, 1000);
+  assert.ok(chunks.length > 1);
+  assert.ok(chunks.every((chunk) => chunk.length <= 1000));
+  assert.match(chunks[0], /早期需求/);
+  assert.match(chunks.at(-1), /最新需求/);
+  const messages = buildDocumentBriefMessages({ chunk: chunks[0] });
+  assert.match(messages[1].content, /事实摘要/);
+  assert.match(messages[1].content, /【数据与数据库】/);
+  const merge = buildDocumentMergeMessages({ summaries: ['片段一', '片段二'] });
+  assert.match(merge[1].content, /必须覆盖所有片段/);
+});
+
+test('keeps forced user turns inside the section context budget', () => {
+  const chat = {
+    messages: [
+      { role: 'user', content: '早期需求'.repeat(3000) },
+      { role: 'user', content: '最新需求'.repeat(3000) },
+    ],
+  };
+  const context = buildSectionTranscript(chat, { heading: '背景与目标' }, 2000);
+  assert.ok(context.length <= 2100);
+  assert.match(context, /最新需求/);
 });
 
 test('plans final structure and keeps only valid final images', () => {
@@ -207,7 +350,31 @@ test('plans final structure and keeps only valid final images', () => {
     ['system', 'user'],
   );
   assert.match(planMessages[1].content, /只输出一个 JSON 对象/);
-  assert.match(planMessages[1].content, /只选终稿图片/);
+  assert.match(planMessages[1].content, /7–10 个章节/);
+  assert.match(planMessages[1].content, /完整数据字典/);
+
+  const imageMessages = buildDocumentImagePlanMessages({
+    chat: { title: '夜跑海报评审' },
+    images: [
+      {
+        id: ID_A,
+        index: 1,
+        turn: 2,
+        prompt: '旧版技术架构',
+        request: '画一张技术架构图',
+      },
+      {
+        id: ID_B,
+        index: 2,
+        turn: 4,
+        prompt: '填实技术选型的技术架构',
+        request: '具体技术实现没有',
+      },
+    ],
+    plan: { title: '夜跑海报评审', sections: [{ heading: '技术架构' }] },
+  });
+  assert.match(imageMessages[1].content, /只选最后生成、最新的一版/);
+  assert.match(imageMessages[1].content, /具体技术实现没有/);
 
   const plan = parseDocumentPlan(
     `\`\`\`json
@@ -222,6 +389,15 @@ test('plans final structure and keeps only valid final images', () => {
     [ID_B],
   );
   assert.equal(plan.images[0].caption, '最终主视觉');
+  const imagePlan = parseDocumentImagePlan(
+    `{"final_images":[{"image_id":"${ID_B}","caption":"最新主视觉","section":1},{"image_id":"${ID_C}","caption":"不存在"}]}`,
+    images,
+    plan.sections,
+  );
+  assert.deepEqual(
+    imagePlan.map((image) => image.id),
+    [ID_B],
+  );
   assert.equal(plan.sections.length, 1);
   assert.deepEqual(plan.keyFacts, ['主视觉 3:2']);
   assert.equal(parseDocumentPlan('不是 JSON', images), null);
@@ -273,9 +449,18 @@ test('renders a PDF with selectable text and an embedded image', async (t) => {
   try {
     buffer = await buildPdf({
       title: 'PDF 测试文档',
-      meta: '由 Luma 整理',
+      meta: '终稿 · 测试',
       blocks: [
         { type: 'paragraph', text: '这一段中文应当可以被 PDF 文本层读取。' },
+        {
+          type: 'table',
+          headers: ['系统', '职责', '排除'],
+          rows: [
+            ['WMS', '库存账、波次、单据', '不管理设备指令'],
+            ['WCS', '任务编排、设备驱动', '不负责库存账'],
+          ],
+        },
+        { type: 'paragraph', text: '表格之后的段落必须回到左边距。' },
         { type: 'image', data: image, width: 120, height: 80, caption: '测试图片' },
       ],
     });
@@ -295,12 +480,23 @@ test('renders a PDF with selectable text and an embedded image', async (t) => {
     isEvalSupported: false,
   }).promise;
   try {
+    const metadata = await pdf.getMetadata();
+    assert.doesNotMatch(JSON.stringify(metadata.info || {}), /Luma/i);
     const page = await pdf.getPage(1);
     const content = await page.getTextContent();
     const text = content.items.map((item) => item.str).join('');
     assert.match(text, /PDF 测试文档/);
     assert.match(text, /这一段中文/);
     assert.match(text, /测试图片/);
+    assert.doesNotMatch(text, /Luma/i);
+    const afterTable = content.items.find((item) =>
+      item.str.includes('表格之后的段落'),
+    );
+    assert.ok(afterTable, 'post-table paragraph should be extractable');
+    assert.ok(
+      afterTable.transform[4] < 100,
+      `post-table paragraph must start at the page margin, got x=${afterTable.transform[4]}`,
+    );
   } finally {
     await pdf.destroy();
   }

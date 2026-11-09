@@ -96,6 +96,8 @@ export async function prepareChatTurn(user, body) {
 
 export async function runPreparedTurn({ user, prepared, emit, signal }) {
   const { message, models, chat, isNew, references, attachments, options, turnId } = prepared;
+  const startedAt = Date.now();
+  const elapsedMs = () => Math.max(0, Date.now() - startedAt);
 
   emit({ type: 'session', sessionId: chat.id, title: chat.title });
 
@@ -125,6 +127,7 @@ export async function runPreparedTurn({ user, prepared, emit, signal }) {
     const ts = now();
     if (!force && ts - lastDraftSave < 600) return;
     lastDraftSave = ts;
+    draft.durationMs = elapsedMs();
     try {
       saveChat(chat);
     } catch {
@@ -158,7 +161,14 @@ export async function runPreparedTurn({ user, prepared, emit, signal }) {
 
     // Keep a draft in the chat document while tokens stream. A refresh then
     // reloads what the user has already seen instead of an empty turn.
-    draft = { role: 'assistant', content: '', images: [], ts: now(), draft: true };
+    draft = {
+      role: 'assistant',
+      content: '',
+      images: [],
+      ts: now(),
+      durationMs: 0,
+      draft: true,
+    };
     chat.messages.push(draft);
 
     const { text } = await runAgent({
@@ -177,8 +187,12 @@ export async function runPreparedTurn({ user, prepared, emit, signal }) {
       turnImages,
     });
 
+    const durationMs = elapsedMs();
+    const finishedAt = now();
     draft.content = text;
     draft.images = turnImages;
+    draft.ts = finishedAt;
+    draft.durationMs = durationMs;
     delete draft.draft;
     if (!draft.content && !draft.images.length) {
       removeDraft();
@@ -187,10 +201,14 @@ export async function runPreparedTurn({ user, prepared, emit, signal }) {
     }
     saveChat(chat);
     if (text) emit({ type: 'text', text });
-    emit({ type: 'done', sessionId: chat.id, created: isNew });
+    emit({ type: 'done', sessionId: chat.id, created: isNew, durationMs, ts: finishedAt });
   } catch (err) {
+    const durationMs = elapsedMs();
+    const finishedAt = now();
     if (draft) {
       draft.images = turnImages;
+      draft.ts = finishedAt;
+      draft.durationMs = durationMs;
       if (draft.content.trim() || draft.images.length) {
         delete draft.draft;
         if (draft.images.length) {
@@ -208,6 +226,13 @@ export async function runPreparedTurn({ user, prepared, emit, signal }) {
     } catch {
       /* best effort */
     }
-    emit({ type: 'done', sessionId: chat.id, created: isNew, aborted: signal.aborted });
+    emit({
+      type: 'done',
+      sessionId: chat.id,
+      created: isNew,
+      aborted: signal.aborted,
+      durationMs,
+      ts: finishedAt,
+    });
   }
 }

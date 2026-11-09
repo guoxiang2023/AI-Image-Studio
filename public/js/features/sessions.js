@@ -12,10 +12,16 @@ import {
   toast,
 } from '../core/index.js';
 import { prependSummaryNote, renderMessages } from './messages.js';
-import { cancelStreamForNavigation } from './stream.js';
+import {
+  attachStreamToView,
+  detachChatView,
+  streamForSession,
+  syncStreamingState,
+} from './stream.js';
 import { clearReference } from './reference.js';
 import { clearAttachments } from './attachments.js';
 import { closeSidebar } from './overlays.js';
+import { shouldReplayLiveStream } from './session-replay.js';
 
 export function setSessionInUrl(id) {
   if (typeof history === 'undefined' || typeof location === 'undefined') return;
@@ -275,7 +281,7 @@ export async function toggleSessionFilter() {
 }
 
 export function newChatView() {
-  cancelStreamForNavigation();
+  detachChatView();
   state.chatArchived = false;
   if (state.sessionFilter !== 'active') {
     state.sessionFilter = 'active';
@@ -298,26 +304,33 @@ export function newChatView() {
 }
 
 export async function openSession(id) {
-  if (state.streaming && id === state.sessionId) {
+  const live = streamForSession(id);
+  if (live && live.viewSeq === state.viewSeq) {
     showChatView();
     closeSidebar();
     els.input.focus();
     return true;
   }
-  cancelStreamForNavigation();
   try {
     const session = await api(`/api/sessions/${id}`);
+    detachChatView();
     state.chatArchived = Boolean(session.archivedAt);
     showChatView();
     state.sessionId = session.id;
     setSessionInUrl(session.id);
-    state.messages = session.messages || [];
+    const messages = session.messages || [];
+    const replayLive = shouldReplayLiveStream(live, messages);
+    state.messages = replayLive
+      ? messages.filter((message) => !message.draft)
+      : messages;
     state.summary = session.summary || '';
     state.summaryUpto = session.summaryUpto || 0;
     clearReference();
     clearAttachments();
     setTitle(session.title || '对话');
     renderMessages();
+    if (replayLive) attachStreamToView(live);
+    else syncStreamingState();
     markActiveSession();
     updateCompactButton();
     closeSidebar();

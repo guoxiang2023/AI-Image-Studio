@@ -1,6 +1,6 @@
 import { el, els, state } from '../core/index.js';
 import { enterApp, resetWorkspace } from './workspace.js';
-import { cancelStreamForNavigation } from './stream.js';
+import { cancelAllStreams } from './stream.js';
 import { closeSettings } from './settings.js';
 import { closeTemplates } from './templates.js';
 import { closeTagModal } from './gallery.js';
@@ -97,7 +97,7 @@ export async function logout() {
   } catch {
     /* ignore */
   }
-  cancelStreamForNavigation();
+  cancelAllStreams();
   resetWorkspace();
   closeSettings();
   closeTemplates();

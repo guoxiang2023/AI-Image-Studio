@@ -10,7 +10,7 @@ import {
 
 function contentDisposition(filename, format, inline) {
   const fallback =
-    format === 'pdf' ? 'luma-document.pdf' : 'luma-document.docx';
+    format === 'pdf' ? 'document.pdf' : 'document.docx';
   const encoded = encodeURIComponent(filename).replace(
     /['()*]/g,
     (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,

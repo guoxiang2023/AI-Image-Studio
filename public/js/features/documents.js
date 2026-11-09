@@ -32,7 +32,7 @@ function createDocumentCard(doc) {
     el('span', `document-format ${doc.format}`, doc.format === 'pdf' ? 'PDF' : 'DOCX'),
   );
   const info = el('div', 'document-card-info');
-  info.appendChild(el('h3', 'document-card-title', doc.title || 'Luma 文档'));
+  info.appendChild(el('h3', 'document-card-title', doc.title || '文档'));
   info.appendChild(el('p', 'document-card-meta', documentMeta(doc)));
   if (doc.chatTitle) {
     info.appendChild(el('p', 'document-card-source', `来自会话：${doc.chatTitle}`));
@@ -114,6 +114,21 @@ function renderPreview(blocks) {
       els.documentModalBody.appendChild(list);
     } else if (block.type === 'quote') {
       els.documentModalBody.appendChild(el('blockquote', 'document-preview-quote', block.text || ''));
+    } else if (block.type === 'table') {
+      const table = el('table', 'document-preview-table');
+      const head = el('thead');
+      const headRow = el('tr');
+      for (const cell of block.headers || []) headRow.appendChild(el('th', '', cell));
+      head.appendChild(headRow);
+      table.appendChild(head);
+      const body = el('tbody');
+      for (const row of block.rows || []) {
+        const tr = el('tr');
+        for (const cell of row || []) tr.appendChild(el('td', '', cell));
+        body.appendChild(tr);
+      }
+      table.appendChild(body);
+      els.documentModalBody.appendChild(table);
     } else if (block.type === 'image' && block.url) {
       const figure = el('figure', 'document-preview-image');
       const img = el('img');
@@ -130,7 +145,7 @@ function renderPreview(blocks) {
 export async function openDocumentPreview(id) {
   try {
     const doc = await api(`/api/documents/${id}`);
-    els.documentModalTitle.textContent = doc.title || 'Luma 文档';
+    els.documentModalTitle.textContent = doc.title || '文档';
     els.documentModalMeta.textContent = [
       documentMeta(doc),
       doc.chatTitle ? `来自：${doc.chatTitle}` : '',
@@ -155,7 +170,7 @@ export function closeDocumentPreview() {
 }
 
 async function deleteDocument(doc) {
-  if (!confirm(`确定删除文档「${doc.title || 'Luma 文档'}」？`)) return;
+  if (!confirm(`确定删除文档「${doc.title || '文档'}」？`)) return;
   try {
     await api(`/api/documents/${doc.id}`, { method: 'DELETE' });
     if (!els.documentModal.hidden) closeDocumentPreview();

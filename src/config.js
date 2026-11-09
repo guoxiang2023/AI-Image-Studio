@@ -40,11 +40,31 @@ export const DOCUMENT_MAX_IMAGES = Math.max(
 );
 export const DOCUMENT_TRANSCRIPT_CHARS = Math.max(
   4000,
-  Number(process.env.DOCUMENT_TRANSCRIPT_CHARS || 14000),
+  Number(process.env.DOCUMENT_TRANSCRIPT_CHARS || 40000),
+);
+export const DOCUMENT_PLAN_CHARS = Math.max(
+  4000,
+  Number(process.env.DOCUMENT_PLAN_CHARS || 12000),
+);
+export const DOCUMENT_SECTION_CHARS = Math.max(
+  4000,
+  Number(process.env.DOCUMENT_SECTION_CHARS || 16000),
+);
+export const DOCUMENT_BRIEF_INPUT_CHARS = Math.max(
+  4000,
+  Number(process.env.DOCUMENT_BRIEF_INPUT_CHARS || 6000),
+);
+export const DOCUMENT_BRIEF_MAX_CHARS = Math.max(
+  1000,
+  Number(process.env.DOCUMENT_BRIEF_MAX_CHARS || 4000),
+);
+export const DOCUMENT_BRIEF_MAX_TOKENS = Math.max(
+  512,
+  Number(process.env.DOCUMENT_BRIEF_MAX_TOKENS || 4096),
 );
 export const DOCUMENT_TIMEOUT = Math.max(
   20,
-  Number(process.env.DOCUMENT_TIMEOUT_SECONDS || 180),
+  Number(process.env.DOCUMENT_TIMEOUT_SECONDS || 600),
 );
 export const DOC_ATTACHMENT_CHARS = Math.max(
   1000,

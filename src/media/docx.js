@@ -77,6 +77,42 @@ function bulletParagraphs(block) {
     .join('');
 }
 
+function tableXml(block) {
+  const headers = Array.isArray(block.headers) ? block.headers : [];
+  const rows = Array.isArray(block.rows) ? block.rows : [];
+  const width = Math.max(
+    headers.length,
+    ...rows.map((row) => (Array.isArray(row) ? row.length : 0)),
+    1,
+  );
+  const usableWidth = 9026;
+  const colWidth = Math.max(900, Math.floor(usableWidth / width));
+  const cellParagraph = (value, heading) =>
+    `<w:p><w:pPr><w:spacing w:after="40" w:line="260" w:lineRule="auto"/></w:pPr>${
+      heading ? textRun(value, { bold: true }) : inlineRuns(value)
+    }</w:p>`;
+  const cell = (value, heading, last) =>
+    `<w:tc><w:tcPr><w:tcW w:w="${last ? usableWidth - colWidth * (width - 1) : colWidth}" w:type="dxa"/>${
+      heading ? '<w:shd w:val="clear" w:color="auto" w:fill="E8EEF7"/>' : ''
+    }<w:vAlign w:val="center"/></w:tcPr>${cellParagraph(value, heading)}</w:tc>`;
+  const rowXml = (cells, heading) =>
+    `<w:tr>${heading ? '<w:trPr><w:tblHeader/></w:trPr>' : ''}${Array.from(
+      { length: width },
+      (_, index) => cell(cells[index] || '', heading, index === width - 1),
+    ).join('')}</w:tr>`;
+  const borders =
+    '<w:tblBorders><w:top w:val="single" w:sz="4" w:color="D1D5DB"/><w:left w:val="single" w:sz="4" w:color="D1D5DB"/><w:bottom w:val="single" w:sz="4" w:color="D1D5DB"/><w:right w:val="single" w:sz="4" w:color="D1D5DB"/><w:insideH w:val="single" w:sz="4" w:color="D1D5DB"/><w:insideV w:val="single" w:sz="4" w:color="D1D5DB"/></w:tblBorders>';
+  const grid = Array.from(
+    { length: width },
+    (_, index) =>
+      `<w:gridCol w:w="${index === width - 1 ? usableWidth - colWidth * (width - 1) : colWidth}"/>`,
+  ).join('');
+  return `<w:tbl><w:tblPr><w:tblW w:w="${usableWidth}" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:tblCellMar><w:top w:w="40" w:type="dxa"/><w:left w:w="60" w:type="dxa"/><w:bottom w:w="40" w:type="dxa"/><w:right w:w="60" w:type="dxa"/></w:tblCellMar>${borders}</w:tblPr><w:tblGrid>${grid}</w:tblGrid>${rowXml(
+    headers,
+    true,
+  )}${rows.map((row) => rowXml(row, false)).join('')}</w:tbl>`;
+}
+
 function imageParagraph(block, relId, number, mediaName) {
   const width = Number(block.width) || 1024;
   const height = Number(block.height) || 1024;
@@ -106,6 +142,9 @@ function documentXml({ title, meta, blocks, media }) {
       body.push(bulletParagraphs(block));
     } else if (block.type === 'quote') {
       body.push(paragraph(block.text, { style: 'Quote' }));
+    } else if (block.type === 'table') {
+      body.push(tableXml(block));
+      body.push(paragraph('', { extra: '<w:spacing w:after="120"/>' }));
     } else if (block.type === 'image' && block.data) {
       imageIndex += 1;
       body.push(
@@ -150,7 +189,7 @@ function documentRelsXml(media) {
 
 function coreXml(title) {
   const created = new Date().toISOString();
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${escapeXml(title)}</dc:title><dc:creator>Luma</dc:creator><cp:lastModifiedBy>Luma</cp:lastModifiedBy><dcterms:created xsi:type="dcterms:W3CDTF">${created}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${created}</dcterms:modified></cp:coreProperties>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${escapeXml(title)}</dc:title><dcterms:created xsi:type="dcterms:W3CDTF">${created}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${created}</dcterms:modified></cp:coreProperties>`;
 }
 
 /**
@@ -178,7 +217,7 @@ export function buildDocx({ title, meta, blocks }) {
       data: contentTypesXml(media),
     },
     { name: '_rels/.rels', data: rootRelsXml() },
-    { name: 'docProps/core.xml', data: coreXml(title || 'Luma 文档') },
+    { name: 'docProps/core.xml', data: coreXml(title || '文档') },
     {
       name: 'word/document.xml',
       data: documentXml({ title, meta, blocks: prepared, media }),

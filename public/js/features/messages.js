@@ -12,6 +12,18 @@ import { openCompare } from './compare.js';
 import { openLightbox, openPromptModal } from './overlays.js';
 import { setPrimaryReference } from './reference.js';
 import { renderMarkdown } from '../core/markdown.js';
+import { formatDuration } from './duration.js';
+import { formatMessageTime } from './message-time.js';
+
+function createMessageMeta(ts, durationMs) {
+  const meta = el('div', 'msg-meta');
+  const time = formatMessageTime(ts);
+  if (time) meta.appendChild(el('span', 'msg-time', time));
+  if (Number.isFinite(Number(durationMs)) && Number(durationMs) >= 0) {
+    meta.appendChild(el('span', 'msg-duration', `用时 ${formatDuration(durationMs)}`));
+  }
+  return meta.children.length ? meta : null;
+}
 
 function showEmptyState() {
   els.messages.innerHTML = '';
@@ -215,6 +227,8 @@ function createUserMessage(message) {
     bubble.appendChild(files);
   }
   body.appendChild(bubble);
+  const meta = createMessageMeta(message.ts);
+  if (meta) body.appendChild(meta);
   wrap.appendChild(body);
 
   const avatar = el('div', 'user-avatar');
@@ -250,6 +264,8 @@ function createAssistantMessage(message) {
     renderMarkdown(content, message.content);
     body.appendChild(content);
   }
+  const meta = createMessageMeta(message.ts, message.durationMs);
+  if (meta) body.appendChild(meta);
   wrap.appendChild(body);
   return wrap;
 }
@@ -281,10 +297,11 @@ export function renderMessages() {
   scrollBottom();
 }
 
-export function createAssistantShell() {
+export function createAssistantShell({ startedAt = Date.now() } = {}) {
   const wrap = el('div', 'msg assistant');
   wrap.appendChild(assistantAvatar());
   const body = el('div', 'body');
+  const started = Number(startedAt) || Date.now();
 
   const status = el('div', 'status');
   const dots = el('span', 'dots');
@@ -294,12 +311,28 @@ export function createAssistantShell() {
   status.appendChild(statusText);
 
   const content = el('div', 'msg-content');
+  const meta = el('div', 'msg-meta');
+  const time = el('span', 'msg-time', formatMessageTime(started));
+  const duration = el('span', 'msg-duration');
+  meta.appendChild(time);
+  meta.appendChild(duration);
   const grid = el('div', 'image-grid');
   const images = [];
   const getGroupImages = (target) =>
     images.filter((item) => item.groupId && item.groupId === target.groupId);
   let text = '';
   let frame = 0;
+  let timer = null;
+
+  const renderElapsed = () => {
+    duration.textContent = `已用时 ${formatDuration(Date.now() - started, { allowZero: true })}`;
+  };
+  renderElapsed();
+  timer = setInterval(renderElapsed, 1000);
+  const stopTimer = () => {
+    if (timer) clearInterval(timer);
+    timer = null;
+  };
 
   const paint = () => {
     if (text) {
@@ -327,6 +360,7 @@ export function createAssistantShell() {
   body.appendChild(grid);
   body.appendChild(status);
   body.appendChild(content);
+  body.appendChild(meta);
   wrap.appendChild(body);
   els.messages.appendChild(wrap);
   scrollBottom();
@@ -363,6 +397,17 @@ export function createAssistantShell() {
       grid.appendChild(createImageCard(img, { getGroupImages }));
       scrollBottom();
     },
+    setDuration(ms) {
+      const value = Number(ms);
+      if (!Number.isFinite(value) || value < 0) return;
+      stopTimer();
+      duration.textContent = `用时 ${formatDuration(value)}`;
+    },
+    setTime(ts) {
+      const value = formatMessageTime(ts);
+      if (value) time.textContent = value;
+    },
+    stopTimer,
     setError(text) {
       cancelPaint();
       status.hidden = true;
@@ -371,6 +416,7 @@ export function createAssistantShell() {
       scrollBottom();
     },
     finish() {
+      stopTimer();
       cancelPaint();
       status.remove();
       if (!content.textContent && !grid.children.length && !body.querySelector('.msg-error')) {

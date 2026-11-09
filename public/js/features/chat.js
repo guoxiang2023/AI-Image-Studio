@@ -6,18 +6,27 @@ import {
   setTitle,
   state,
   toast,
-  updateSendButton,
 } from '../core/index.js';
 import { createAssistantShell, createUserMessage, prependSummaryNote } from './messages.js';
 import { clearAttachments } from './attachments.js';
 import { clearReference } from './reference.js';
 import { markActiveSession, refreshSessions, setSessionInUrl } from './sessions.js';
-import { abortStream } from './stream.js';
+import {
+  activeStream,
+  ensureStreamShell,
+  streamForSession,
+  syncStreamingState,
+} from './stream.js';
 import { refreshGallery } from './gallery.js';
 
 export async function send() {
-  if (state.streaming) {
-    abortStream();
+  const running = activeStream();
+  if (running) {
+    running.controller.abort();
+    return;
+  }
+  if (state.sessionId && streamForSession(state.sessionId)) {
+    toast('当前会话正在生成，请稍候');
     return;
   }
 
@@ -30,6 +39,7 @@ export async function send() {
   const userMessage = {
     role: 'user',
     content: text,
+    ts: Date.now(),
     ...(references.length
       ? {
           references,
@@ -50,32 +60,47 @@ export async function send() {
   autoGrow();
   clearReference();
   clearAttachments();
-  state.streaming = true;
-  updateSendButton();
   scrollBottom();
 
-  const shell = createAssistantShell();
-  const assistantMessage = { role: 'assistant', content: '', images: [] };
-  const controller = new AbortController();
-  state.controller = controller;
+  const stream = {
+    seq,
+    viewSeq: state.viewSeq,
+    sessionId: state.sessionId,
+    controller: new AbortController(),
+    startedAt: Date.now(),
+    finishedAt: 0,
+    durationMs: 0,
+    content: '',
+    images: [],
+    status: '思考中…',
+    error: '',
+    done: false,
+    shell: null,
+  };
+  state.streams.set(seq, stream);
+  stream.shell = createAssistantShell({ startedAt: stream.startedAt });
+  syncStreamingState();
 
-  let sessionId = state.sessionId;
+  const sameView = () => stream.viewSeq === state.viewSeq;
 
   const handleEvent = (event) => {
     if (event.type === 'session') {
-      sessionId = event.sessionId;
-      state.sessionId = event.sessionId;
-      setSessionInUrl(event.sessionId);
-      if (event.title) setTitle(event.title);
-      markActiveSession();
+      stream.sessionId = event.sessionId;
+      if (sameView()) {
+        state.sessionId = event.sessionId;
+        setSessionInUrl(event.sessionId);
+        if (event.title) setTitle(event.title);
+        markActiveSession();
+      }
     } else if (event.type === 'status') {
-      shell.setStatus(event.text);
+      stream.status = event.text;
+      if (sameView()) ensureStreamShell(stream)?.setStatus(event.text);
     } else if (event.type === 'delta') {
-      assistantMessage.content += event.text;
-      shell.appendText(event.text);
+      stream.content += event.text;
+      if (sameView()) ensureStreamShell(stream)?.appendText(event.text);
     } else if (event.type === 'reset') {
-      assistantMessage.content = '';
-      shell.resetText();
+      stream.content = '';
+      if (sameView()) ensureStreamShell(stream)?.resetText();
     } else if (event.type === 'image') {
       const image = {
         id: event.id,
@@ -89,25 +114,37 @@ export async function send() {
         quality: event.quality,
         caption: event.caption,
       };
-      assistantMessage.images.push(image);
-      shell.addImage(image);
+      stream.images.push(image);
+      if (sameView()) ensureStreamShell(stream)?.addImage(image);
       if (state.view === 'gallery') void refreshGallery();
     } else if (event.type === 'text') {
-      assistantMessage.content = event.text;
-      shell.setText(event.text);
+      stream.content = event.text;
+      if (sameView()) ensureStreamShell(stream)?.setText(event.text);
     } else if (event.type === 'document') {
       const document = event.document || {};
-      toast(`文档已生成：${document.title || 'Luma 文档'}，可在「我的文档」查看`);
+      toast(`文档已生成：${document.title || '文档'}，可在「我的文档」查看`);
     } else if (event.type === 'summary') {
+      if (!sameView()) return;
       state.summary = event.summary || '';
       state.summaryUpto = event.upto || 0;
       prependSummaryNote();
       scrollBottom();
     } else if (event.type === 'error') {
-      shell.setError(event.message);
+      stream.error = event.message;
+      if (sameView()) ensureStreamShell(stream)?.setError(event.message);
     } else if (event.type === 'done') {
-      sessionId = event.sessionId || sessionId;
-      state.sessionId = sessionId;
+      if (Number.isFinite(Number(event.durationMs))) {
+        stream.durationMs = Number(event.durationMs);
+      }
+      if (Number.isFinite(Number(event.ts))) stream.finishedAt = Number(event.ts);
+      if (event.sessionId) stream.sessionId = event.sessionId;
+      if (sameView() && stream.finishedAt) {
+        ensureStreamShell(stream)?.setTime(stream.finishedAt);
+      }
+      if (sameView() && stream.sessionId) {
+        state.sessionId = stream.sessionId;
+        setSessionInUrl(stream.sessionId);
+      }
     }
   };
 
@@ -116,7 +153,7 @@ export async function send() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        sessionId,
+        sessionId: stream.sessionId,
         message: text,
         ...(state.qr ? { qr: state.qr } : {}),
         ...(references.length
@@ -128,7 +165,7 @@ export async function send() {
         ...(attachments.length ? { attachmentIds: attachments.map((item) => item.id) } : {}),
         options: state.options,
       }),
-      signal: controller.signal,
+      signal: stream.controller.signal,
     });
 
     if (res.status === 401) {
@@ -141,29 +178,49 @@ export async function send() {
     }
 
     await readSSE(res.body, handleEvent);
-    shell.finish();
-    if (assistantMessage.content || assistantMessage.images.length) {
-      state.messages.push(assistantMessage);
+    stream.done = true;
+    if (!stream.finishedAt) stream.finishedAt = Date.now();
+    if (!stream.durationMs) stream.durationMs = Date.now() - stream.startedAt;
+    if (sameView()) {
+      const shell = ensureStreamShell(stream);
+      shell?.setTime(stream.finishedAt);
+      shell?.setDuration(stream.durationMs);
+      shell?.finish();
+      if (stream.content || stream.images.length) {
+        state.messages.push({
+          role: 'assistant',
+          content: stream.content,
+          images: stream.images,
+          ts: stream.finishedAt,
+          durationMs: stream.durationMs,
+        });
+      }
     }
   } catch (error) {
-    if (error.name === 'AbortError') {
-      shell.setError('已停止生成');
-    } else {
-      shell.setError(error.message);
-      shell.finish();
+    if (!state.streams.has(stream.seq)) return;
+    if (!stream.finishedAt) stream.finishedAt = Date.now();
+    if (!stream.durationMs) stream.durationMs = Date.now() - stream.startedAt;
+    stream.error = error.name === 'AbortError' ? '已停止生成' : error.message;
+    if (sameView()) {
+      const shell = ensureStreamShell(stream);
+      if (shell) {
+        shell.setError(stream.error);
+        shell.setTime(stream.finishedAt);
+        shell.setDuration(stream.durationMs);
+        shell.finish();
+      }
     }
   } finally {
-    if (state.streamSeq !== seq) return;
-    state.streaming = false;
-    state.controller = null;
-    updateSendButton();
-    if (sessionId) {
-      state.sessionId = sessionId;
+    if (!state.streams.has(stream.seq)) return;
+    stream.done = true;
+    state.streams.delete(stream.seq);
+    syncStreamingState();
+    if (stream.sessionId) {
       await refreshSessions();
-      markActiveSession();
+      if (state.sessionId === stream.sessionId) markActiveSession();
     }
     if (state.view === 'gallery') await refreshGallery();
-    scrollBottom();
+    if (sameView()) scrollBottom();
   }
 }
 

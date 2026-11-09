@@ -1419,6 +1419,27 @@ html[data-theme="light"] .ico-moon {
   display: none;
 }
 
+.msg-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+}
+
+.msg.user .msg-meta {
+  justify-content: flex-end;
+  margin-top: 7px;
+}
+
+.msg-time,
+.msg-duration {
+  white-space: nowrap;
+}
+
 .msg-error {
   align-self: flex-start;
   font-size: 13px;
@@ -2518,6 +2539,30 @@ h5.document-preview-heading {
 
 .document-preview-list li + li {
   margin-top: 4px;
+}
+
+.document-preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.document-preview-table th,
+.document-preview-table td {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.document-preview-table th {
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  font-weight: 600;
+}
+
+.document-preview-table tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--panel) 60%, transparent);
 }
 
 .document-preview-quote {

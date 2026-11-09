@@ -181,13 +181,102 @@ function footer(doc, bodyFont) {
       .font(bodyFont)
       .fontSize(8)
       .fillColor('#9CA3AF')
-      .text(`Luma · ${index + 1} / ${range.count}`, PAGE_MARGIN, PAGE_HEIGHT - 38, {
+      .text(`${index + 1} / ${range.count}`, PAGE_MARGIN, PAGE_HEIGHT - 38, {
         width: CONTENT_WIDTH,
         align: 'right',
         lineBreak: false,
       });
     doc.page.margins.bottom = marginBottom;
   }
+}
+
+function tableColumnWidths(headers, totalWidth) {
+  const weights = headers.map((header) => {
+    const value = String(header || '');
+    if (/说明|描述|备注|作用|内容|description|note/i.test(value)) return 3.2;
+    if (/字段|名称|表名|field|name/i.test(value)) return 1.7;
+    if (/类型|长度|必填|默认|type|length|required|default/i.test(value)) return 0.85;
+    return 1.25;
+  });
+  const sum = weights.reduce((total, value) => total + value, 0) || 1;
+  return weights.map((weight) => (totalWidth * weight) / sum);
+}
+
+function drawTable(doc, block, { bodyFont, boldFont, bottom }) {
+  const headers = Array.isArray(block.headers) ? block.headers : [];
+  const rows = Array.isArray(block.rows) ? block.rows : [];
+  const width = Math.max(headers.length, ...rows.map((row) => row.length), 1);
+  if (!headers.length && !rows.length) return;
+  const columns = tableColumnWidths(
+    Array.from({ length: width }, (_, index) => headers[index] || ''),
+    CONTENT_WIDTH,
+  );
+  const cellPadding = 4;
+  const fontSize = 8.5;
+  const lineGap = 1;
+  const measure = (cells, heading) => {
+    doc.font(heading ? boldFont : bodyFont).fontSize(fontSize);
+    return Math.max(
+      18,
+      ...columns.map((columnWidth, index) =>
+        doc.heightOfString(plainText(cells[index] || ''), {
+          width: columnWidth - cellPadding * 2,
+          lineGap,
+        }) + cellPadding * 2,
+      ),
+    );
+  };
+  const drawRow = (cells, heading, y, rowHeight) => {
+    const x = PAGE_MARGIN;
+    if (heading) {
+      doc.save().rect(x, y, CONTENT_WIDTH, rowHeight).fill('#E8EEF7').restore();
+    }
+    let cellX = x;
+    for (let index = 0; index < width; index += 1) {
+      const columnWidth = columns[index];
+      doc
+        .font(heading ? boldFont : bodyFont)
+        .fontSize(fontSize)
+        .fillColor(heading ? '#111827' : '#1F2937')
+        .text(plainText(cells[index] || ''), cellX + cellPadding, y + cellPadding, {
+          width: columnWidth - cellPadding * 2,
+          lineGap,
+        });
+      cellX += columnWidth;
+    }
+    doc
+      .save()
+      .lineWidth(0.4)
+      .strokeColor('#D1D5DB')
+      .rect(x, y, CONTENT_WIDTH, rowHeight)
+      .stroke();
+    let lineX = x;
+    for (let index = 0; index < width - 1; index += 1) {
+      lineX += columns[index];
+      doc.moveTo(lineX, y).lineTo(lineX, y + rowHeight).stroke();
+    }
+    doc.restore();
+    return y + rowHeight;
+  };
+
+  let y = doc.y;
+  const headerHeight = measure(headers, true);
+  const firstRowHeight = rows.length ? measure(rows[0], false) : 0;
+  if (y + headerHeight + firstRowHeight > bottom) {
+    doc.addPage();
+    y = doc.y;
+  }
+  y = drawRow(headers, true, y, headerHeight);
+  for (const row of rows) {
+    const rowHeight = measure(row, false);
+    if (y + rowHeight > bottom) {
+      doc.addPage();
+      y = doc.y;
+      y = drawRow(headers, true, y, headerHeight);
+    }
+    y = drawRow(row, false, y, rowHeight);
+  }
+  doc.y = y + 4;
 }
 
 /**
@@ -207,9 +296,7 @@ export async function buildPdf({ title, meta, blocks }) {
     },
     bufferPages: true,
     info: {
-      Title: title || 'Luma 文档',
-      Author: 'Luma',
-      Creator: 'Luma',
+      Title: title || '文档',
     },
   });
 
@@ -253,6 +340,10 @@ export async function buildPdf({ title, meta, blocks }) {
   }
 
   for (const block of blocks || []) {
+    // Table cells leave PDFKit's current x at the last column. Reset before
+    // every block so following headings/paragraphs start at the page margin
+    // instead of being pushed into the right-hand table column.
+    doc.x = PAGE_MARGIN;
     if (block.type === 'heading') {
       const style = headingStyle(block.level);
       ensureSpace(style.size + 34);
@@ -309,6 +400,10 @@ export async function buildPdf({ title, meta, blocks }) {
           .restore();
       }
       doc.moveDown(0.6);
+    } else if (block.type === 'table') {
+      drawTable(doc, block, { bodyFont, boldFont, bottom });
+      doc.x = PAGE_MARGIN;
+      doc.moveDown(0.45);
     } else if (block.type === 'image' && block.data) {
       const width = Number(block.width) || 1024;
       const height = Number(block.height) || 1024;
