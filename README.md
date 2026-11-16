@@ -117,6 +117,7 @@ npm test
 | `DOC_ATTACHMENT_CHARS` | `12000` | 每次送进上下文的单附件文字预算 |
 | `DOC_ATTACHMENT_TOTAL` | `36000` | 每次送进上下文的全部附件文字预算 |
 | `DOCUMENT_MAX_IMAGES` | `60` | 文档候选终稿图片上限；先排除废弃、失效和被后续编辑替换的图片，再保留最近图片 |
+| `DOCUMENT_FINAL_IMAGES` | `24` | 真正进入终稿的图片上限（配图提示词与解析共用）；不能超过 `DOCUMENT_MAX_IMAGES` |
 | `DOCUMENT_TRANSCRIPT_CHARS` | `40000` | 兼容用完整对话记录上限；文档实际按章节选取相关片段 |
 | `DOCUMENT_PLAN_CHARS` | `12000` | 文档大纲策划请求的对话纲要上限 |
 | `DOCUMENT_BRIEF_INPUT_CHARS` | `6000` | 生成文档前分块做主题摘要的单块输入上限 |

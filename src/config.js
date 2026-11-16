@@ -38,6 +38,12 @@ export const DOCUMENT_MAX_IMAGES = Math.max(
   1,
   Number(process.env.DOCUMENT_MAX_IMAGES || 60),
 );
+// Final images that actually enter the document. The candidate pool above can
+// be much larger; this is the cap the image planner prompt and parser enforce.
+export const DOCUMENT_FINAL_IMAGES = Math.min(
+  DOCUMENT_MAX_IMAGES,
+  Math.max(1, Number(process.env.DOCUMENT_FINAL_IMAGES || 24)),
+);
 export const DOCUMENT_TRANSCRIPT_CHARS = Math.max(
   4000,
   Number(process.env.DOCUMENT_TRANSCRIPT_CHARS || 40000),

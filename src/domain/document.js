@@ -1,3 +1,4 @@
+import { DOCUMENT_FINAL_IMAGES } from '../config.js';
 import { clipText } from '../shared/utils.js';
 
 const IMAGE_LINE_RE = /^!\[([^\]]*)\]\(\s*(?:image:)?([a-f0-9]{16,40})\s*\)\s*$/i;
@@ -527,8 +528,13 @@ export function buildSectionTranscript(chat, section, maxChars = 16000) {
     .join('\n\n')}`;
 }
 
-export function fallbackDocumentImages(images, sections = []) {
-  const candidate = (images || []).filter((image) => image?.id).slice(-8);
+export function fallbackDocumentImages(
+  images,
+  sections = [],
+  limit = DOCUMENT_FINAL_IMAGES,
+) {
+  const max = Math.max(1, Number(limit) || DOCUMENT_FINAL_IMAGES);
+  const candidate = (images || []).filter((image) => image?.id).slice(-max);
   return candidate.map((image, index) => ({
     ...image,
     caption: clipText(image.caption || image.prompt || '文档配图', 30),
@@ -536,6 +542,58 @@ export function fallbackDocumentImages(images, sections = []) {
     section: sections.length ? (index % sections.length) + 1 : 0,
     index: index + 1,
   }));
+}
+
+/**
+ * Distributes final images across chapters. A chapter prompt may cite only a
+ * bounded number of images, so images crowded onto one chapter would never be
+ * referenced and would be dropped at finalization.
+ *
+ * The per-chapter quota is derived from capacity, not fixed: every chosen image
+ * gets a citable slot whenever `sections.length >= 1`. Only when the caller
+ * explicitly lowers the quota can images be reported as dropped.
+ */
+export function sectionImageBuckets(plan, sections = [], perChapter = 0) {
+  const list = Array.isArray(sections) ? sections : [];
+  const images = (plan?.images || []).filter((image) => image?.id);
+  if (!list.length) {
+    return {
+      buckets: [],
+      perChapter: Math.max(images.length, 1),
+      dropped: images.map((image) => ({ ...image })),
+    };
+  }
+  const requested = Math.trunc(Number(perChapter)) || 0;
+  const needed = Math.ceil(images.length / list.length);
+  const cap = Math.max(requested > 0 ? requested : needed, 1);
+  const buckets = list.map(() => []);
+  const overflow = [];
+  let next = 0;
+  for (const image of images) {
+    let index = Math.trunc(Number(image.section)) - 1;
+    if (!Number.isInteger(index) || index < 0 || index >= list.length) {
+      index = next % list.length;
+    }
+    next += 1;
+    if (buckets[index].length < cap) buckets[index].push({ ...image });
+    else overflow.push({ ...image });
+  }
+  const dropped = [];
+  for (const entry of overflow) {
+    const index = buckets.findIndex((bucket) => bucket.length < cap);
+    if (index < 0) {
+      dropped.push(entry);
+      continue;
+    }
+    buckets[index].push(entry);
+  }
+  return {
+    buckets: buckets.map((bucket) =>
+      bucket.map((image, index) => ({ ...image, index: index + 1 })),
+    ),
+    perChapter: cap,
+    dropped,
+  };
 }
 
 export function buildDocumentPlanPrompt({ chat, transcript }) {
@@ -602,7 +660,13 @@ export function buildDocumentPlanMessages({ chat, transcript }) {
   ];
 }
 
-export function buildDocumentImagePlanPrompt({ chat, images, plan }) {
+export function buildDocumentImagePlanPrompt({
+  chat,
+  images,
+  plan,
+  limit = DOCUMENT_FINAL_IMAGES,
+}) {
+  const maxImages = Math.max(1, Number(limit) || DOCUMENT_FINAL_IMAGES);
   const outline = (plan?.sections || [])
     .map((section, index) => `${index + 1}. ${section.heading}`)
     .join('\n');
@@ -619,7 +683,7 @@ ${outline || '（未提供章节）'}
 3. 结合“生成前用户要求”判断：如果用户先要求画技术架构图，后指出“具体技术实现没有”，必须选后一张填实技术选型/具体组件的版本，不能选之前的通用分层版。
 4. 系统架构、技术架构、数据架构、数据流、ER 图、部署图、状态机、时序图、报文图是不同主题，不要互相替代。ER 图放数据库章节，技术架构图放技术架构章节，部署图放部署章节，状态机/时序/报文图放接口或流程章节。
 5. 部署架构图必须是“中心机房 / 边缘节点 / 设备网与现场总线”的分区部署图；多库区网络拓扑不能替代部署架构图，二者可以同时选。
-6. 只选最终交付用图，不选被用户否定、被后续修订替代、仅用于比较的试验稿。通常选 4–12 张，最多 12 张；没有合适图片就用空数组。
+6. 只选最终交付用图，不选被用户否定、被后续修订替代、仅用于比较的试验稿。按内容价值取舍，最多选 ${maxImages} 张；没有合适图片就用空数组，不要为了凑数把同组变体全部写入。
 7. 设计类文档只要候选中有对应主题，至少覆盖：系统架构图、最新技术架构图、数据架构/数据流图、数据库 ER 图、部署架构图；状态机、接口时序、报文格式图按需选择。告警、容灾、多库区拓扑等细节图不要挤掉上述重点图。
 8. 图注写这张终稿图在文档中的作用（8–30 字），不要写“第几次尝试”，也不要给旧图安上不属于它的标题。
 
@@ -631,7 +695,12 @@ ${outline || '（未提供章节）'}
 ${formatImageCatalog(images)}`;
 }
 
-export function buildDocumentImagePlanMessages({ chat, images, plan }) {
+export function buildDocumentImagePlanMessages({
+  chat,
+  images,
+  plan,
+  limit = DOCUMENT_FINAL_IMAGES,
+}) {
   return [
     {
       role: 'system',
@@ -640,7 +709,7 @@ export function buildDocumentImagePlanMessages({ chat, images, plan }) {
     },
     {
       role: 'user',
-      content: buildDocumentImagePlanPrompt({ chat, images, plan }),
+      content: buildDocumentImagePlanPrompt({ chat, images, plan, limit }),
     },
   ];
 }
@@ -676,7 +745,13 @@ function parsePlanObject(value) {
   return parsed;
 }
 
-function selectPlanImages(requested, images, sections) {
+function selectPlanImages(
+  requested,
+  images,
+  sections,
+  limit = DOCUMENT_FINAL_IMAGES,
+) {
+  const max = Math.max(1, Number(limit) || DOCUMENT_FINAL_IMAGES);
   const byId = new Map((images || []).map((image) => [image.id, image]));
   const selected = [];
   for (const item of Array.isArray(requested) ? requested : []) {
@@ -690,7 +765,7 @@ function selectPlanImages(requested, images, sections) {
       role: planString(item?.role, 80),
       section: sectionNumber > 0 ? sectionNumber : 0,
     });
-    if (selected.length >= 12) break;
+    if (selected.length >= max) break;
   }
   for (const image of selected) {
     if (image.section > sections.length) image.section = 0;
@@ -698,7 +773,7 @@ function selectPlanImages(requested, images, sections) {
   return selected;
 }
 
-export function parseDocumentPlan(value, images = []) {
+export function parseDocumentPlan(value, images = [], limit = DOCUMENT_FINAL_IMAGES) {
   const parsed = parsePlanObject(value);
   if (!parsed) return null;
 
@@ -713,7 +788,7 @@ export function parseDocumentPlan(value, images = []) {
     }))
     .filter((section) => section.heading)
     .slice(0, 10);
-  const selected = selectPlanImages(parsed.final_images, images, sections);
+  const selected = selectPlanImages(parsed.final_images, images, sections, limit);
 
   const title = planString(parsed.title, 120);
   const coreMessage = planString(parsed.core_message, 500);
@@ -732,10 +807,20 @@ export function parseDocumentPlan(value, images = []) {
   };
 }
 
-export function parseDocumentImagePlan(value, images, sections = []) {
+export function parseDocumentImagePlan(
+  value,
+  images,
+  sections = [],
+  limit = DOCUMENT_FINAL_IMAGES,
+) {
   const parsed = parsePlanObject(value);
   if (!parsed) return null;
-  return selectPlanImages(parsed.final_images || parsed.images, images, sections);
+  return selectPlanImages(
+    parsed.final_images || parsed.images,
+    images,
+    sections,
+    limit,
+  );
 }
 
 function formatPlanForPrompt(plan) {
@@ -854,7 +939,12 @@ export function buildDocumentSectionMessages({
   total,
   images,
   transcript,
+  imageQuota,
 }) {
+  const quota = Math.max(
+    1,
+    Math.trunc(Number(imageQuota)) || (images?.length || 0) || 3,
+  );
   const title = plan?.title || chat?.title || '文档';
   const displayHeading = `${index + 1}. ${section.heading}`;
   const outline = (plan?.sections || [])
@@ -899,7 +989,7 @@ ${outline}
 4. 如果本章涉及技术架构：必须采用对话中最后一版、包含具体技术实现和组件选型的技术架构图与文字选型；不得使用更早的通用分层版或旧版架构图。
 5. 如果本章涉及接口、报文、任务状态或流程：保留接口清单、报文关键字段、状态码、ACK/NACK、超时重试、幂等键和异常分支；不要只写“有接口”或“按状态机流转”。
 6. 直接输出 Markdown，不要输出分析、前言、代码块或额外解释；不要在正文里解释写作过程。可以使用 Markdown 表格、列表和三级标题。
-7. 图片只能引用本章清单中的 image_id，最多引用 3 张；使用 \`![8–30 字图注](image_id)\` 格式，放在相关结论之后；清单外图片一律不要引用。如果本章清单为空，不要输出图片，也不要声称“全文没有图片”或“本章无图”，直接写正文。
+7. 图片只能引用本章清单中的 image_id，最多引用 ${quota} 张；使用 \`![8–30 字图注](image_id)\` 格式，放在相关结论之后；清单外图片一律不要引用。本章清单中的图如与正文相关就应引用，不要遗漏；如果本章清单为空，不要输出图片，也不要声称“全文没有图片”或“本章无图”，直接写正文。
 8. 不要在每个章节重复同一组全局待确认事项；只有本章特有的技术选择、风险或待定项才列，全局事项集中到最后 1 章。
 9. 除最后 1 章外，绝对不要生成任何标题包含“待确认/待评审/待定/需评审”的小节；本章特有的待定项用一句正文结尾说明即可。
 10. 不要将文档交付格式（Word/PDF）、图片数量、图号、附录索引列为风险或待确认事项。

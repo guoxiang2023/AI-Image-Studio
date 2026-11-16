@@ -3,6 +3,7 @@ import {
   DOCUMENT_BRIEF_INPUT_CHARS,
   DOCUMENT_BRIEF_MAX_CHARS,
   DOCUMENT_BRIEF_MAX_TOKENS,
+  DOCUMENT_FINAL_IMAGES,
   DOCUMENT_MAX_IMAGES,
   DOCUMENT_PLAN_CHARS,
   DOCUMENT_SECTION_CHARS,
@@ -25,6 +26,7 @@ import {
   finalizeDocument,
   parseDocumentImagePlan,
   parseDocumentPlan,
+  sectionImageBuckets,
   selectFinalDocumentImages,
 } from '../domain/document.js';
 import { findGalleryImage } from '../data/repositories/gallery.js';
@@ -261,20 +263,6 @@ async function buildDocumentBrief(user, chat, llm, signal, turnId) {
   return `【摘要覆盖】共处理 ${chunks.length} 个对话片段，全部纳入主题摘要。\n${brief}`.trim();
 }
 
-function sectionImageBuckets(plan, sections) {
-  const buckets = sections.map(() => []);
-  let next = 0;
-  for (const image of plan.images || []) {
-    let index = Math.trunc(Number(image.section)) - 1;
-    if (!Number.isInteger(index) || index < 0 || index >= sections.length) {
-      index = next % sections.length;
-    }
-    next += 1;
-    buckets[index].push({ ...image, index: buckets[index].length + 1 });
-  }
-  return buckets;
-}
-
 function unwrapMarkdown(text) {
   return String(text || '')
     .replace(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/i, '$1')
@@ -408,10 +396,17 @@ export async function generateSessionDocument(
         chat,
         images: candidates,
         plan,
+        limit: DOCUMENT_FINAL_IMAGES,
       });
       const imageResponse = await chatCompletion(planLlm, imageMessages, {
         tools: false,
-        maxTokens: PLAN_MAX_TOKENS,
+        // Each selected image needs ~90 tokens of JSON (id, caption, role,
+        // section). A flat 2048 budget truncates a full 24-image plan, and a
+        // truncated plan silently degrades to the fallback image set.
+        maxTokens: Math.min(
+          8192,
+          Math.max(PLAN_MAX_TOKENS, 512 + DOCUMENT_FINAL_IMAGES * 120),
+        ),
         temperature: 0.2,
         signal: timeoutSignal,
       });
@@ -420,15 +415,24 @@ export async function generateSessionDocument(
       const selected =
         responseFinish(imageResponse) === 'length'
           ? null
-          : parseDocumentImagePlan(imageText, candidates, plan.sections);
+          : parseDocumentImagePlan(
+              imageText,
+              candidates,
+              plan.sections,
+              DOCUMENT_FINAL_IMAGES,
+            );
       if (selected) selectedImages.push(...selected);
       else {
-        selectedImages.push(...fallbackDocumentImages(candidates, plan.sections));
+        selectedImages.push(
+          ...fallbackDocumentImages(candidates, plan.sections, DOCUMENT_FINAL_IMAGES),
+        );
         console.warn('文档配图降级：使用按时间排序的候选图');
       }
     } catch (err) {
       if (signal?.aborted || timeoutSignal.aborted) throw err;
-      selectedImages.push(...fallbackDocumentImages(candidates, plan.sections));
+      selectedImages.push(
+        ...fallbackDocumentImages(candidates, plan.sections, DOCUMENT_FINAL_IMAGES),
+      );
       console.warn('文档配图降级:', err.message);
     }
   }
@@ -438,7 +442,15 @@ export async function generateSessionDocument(
     ? plan.sections
     : [{ heading: '文档正文', purpose: '', points: [] }];
   const title = plan.title || chat.title || '文档';
-  const imageBuckets = sectionImageBuckets(plan, sections);
+  const { buckets: imageBuckets, perChapter, dropped } = sectionImageBuckets(
+    plan,
+    sections,
+  );
+  if (dropped.length) {
+    console.warn(
+      `文档配图：${dropped.length} 张图没有可引用它的章节，已跳过（每章最多 ${perChapter} 张）`,
+    );
+  }
   const markdownParts = [`# ${title}`];
 
   try {
@@ -480,6 +492,7 @@ export async function generateSessionDocument(
           total: sections.length,
           images: imageBuckets[index],
           transcript,
+          imageQuota: Math.max(perChapter, imageBuckets[index]?.length || 0),
         });
       };
       let sectionMessages = makeSectionMessages(sectionBudget);

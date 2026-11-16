@@ -9,12 +9,15 @@ import {
   buildDocumentPlanMessages,
   buildFallbackDocumentPlan,
   buildSectionTranscript,
+  buildDocumentSectionMessages,
   buildTranscript,
   collectDocumentImages,
+  fallbackDocumentImages,
   finalizeDocument,
   parseDocumentImagePlan,
   parseDocumentMarkdown,
   parseDocumentPlan,
+  sectionImageBuckets,
   selectFinalDocumentImages,
 } from '../src/domain/document.js';
 import { buildAnthropicRequest } from '../src/ai/anthropic.js';
@@ -401,6 +404,102 @@ test('plans final structure and keeps only valid final images', () => {
   assert.equal(plan.sections.length, 1);
   assert.deepEqual(plan.keyFacts, ['主视觉 3:2']);
   assert.equal(parseDocumentPlan('不是 JSON', images), null);
+});
+
+test('keeps more than twelve final images and honors the caller limit', () => {
+  const ids = Array.from({ length: 20 }, (_, index) =>
+    index.toString(16).padStart(24, '0'),
+  );
+  const images = ids.map((id, index) => ({ id, index: index + 1, prompt: `图 ${index + 1}` }));
+  const requested = ids.map((id, index) => ({
+    image_id: id,
+    caption: `第 ${index + 1} 张终稿图`,
+    section: 1,
+  }));
+
+  const selected = parseDocumentImagePlan(
+    JSON.stringify({ final_images: requested }),
+    images,
+    [{ heading: '总体设计概览' }],
+    18,
+  );
+  assert.equal(selected.length, 18);
+
+  const defaulted = parseDocumentImagePlan(
+    JSON.stringify({ final_images: requested }),
+    images,
+    [{ heading: '总体设计概览' }],
+  );
+  assert.equal(defaulted.length, 20);
+
+  const fallback = fallbackDocumentImages(images, [{ heading: '背景' }], 15);
+  assert.equal(fallback.length, 15);
+
+  const prompt = buildDocumentImagePlanMessages({
+    chat: { title: '图数上限' },
+    images,
+    plan: { title: '图数上限', sections: [{ heading: '背景' }] },
+    limit: 30,
+  });
+  assert.match(prompt[1].content, /最多选 30 张/);
+});
+
+test('spreads images across chapters so none is silently dropped', () => {
+  const ids = Array.from({ length: 24 }, (_, index) =>
+    index.toString(16).padStart(24, '0'),
+  );
+  const images = ids.map((id) => ({ id, section: 1 }));
+  const sections = Array.from({ length: 7 }, (_, index) => ({ heading: `章 ${index + 1}` }));
+
+  // 24 images on 7 chapters is the default worst case: quota must grow past 3.
+  const wide = sectionImageBuckets({ images }, sections);
+  assert.deepEqual(wide.dropped, []);
+  assert.equal(wide.buckets.flat().length, 24);
+  assert.equal(wide.perChapter, 4);
+  assert.ok(
+    wide.buckets.every((bucket) => bucket.length <= wide.perChapter),
+    '每章引用数不能超过章节提示词的配额',
+  );
+
+  const tenChapters = sectionImageBuckets(
+    { images },
+    Array.from({ length: 10 }, (_, index) => ({ heading: `章 ${index + 1}` })),
+  );
+  assert.deepEqual(tenChapters.dropped, []);
+  assert.equal(tenChapters.buckets.flat().length, 24);
+
+  // An explicit smaller quota is the only way images get reported as dropped.
+  const capped = sectionImageBuckets({ images }, sections, 3);
+  assert.equal(capped.buckets.flat().length, 21);
+  assert.equal(capped.dropped.length, 3);
+
+  const emptySections = sectionImageBuckets({ images }, []);
+  assert.deepEqual(emptySections.buckets, []);
+  assert.equal(emptySections.dropped.length, 24);
+
+  const unknownSection = sectionImageBuckets(
+    { images: [{ id: ids[0], section: 99 }] },
+    [{ heading: '章 1' }, { heading: '章 2' }],
+  );
+  assert.equal(unknownSection.buckets[0].length, 1);
+});
+
+test('chapter prompt cites as many images as its bucket holds', () => {
+  const images = Array.from({ length: 4 }, (_, index) => ({
+    id: index.toString(16).padStart(24, '0'),
+    caption: `图 ${index + 1}`,
+  }));
+  const messages = buildDocumentSectionMessages({
+    chat: { title: '配额' },
+    plan: { title: '配额', sections: [{ heading: '背景' }] },
+    section: { heading: '背景' },
+    index: 0,
+    total: 1,
+    images,
+    transcript: '',
+    imageQuota: 4,
+  });
+  assert.match(messages[1].content, /最多引用 4 张/);
 });
 
 test('document request keeps a user turn for Anthropic Messages', () => {
