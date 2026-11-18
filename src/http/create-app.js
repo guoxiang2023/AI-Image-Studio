@@ -41,7 +41,11 @@ import {
 } from './routes/studio.js';
 import { handleDocumentUpload, handleUpload } from './routes/upload.js';
 import { handleUsage } from './routes/usage.js';
-import { handleVersion } from './routes/version.js';
+import {
+  handleUpdateInstall,
+  handleUpdateStatus,
+  handleVersion,
+} from './routes/version.js';
 import { serveImageFile, serveStatic } from './static.js';
 
 function buildRouter() {
@@ -49,6 +53,8 @@ function buildRouter() {
 
   router.get('/api/health', ({ res }) => json(res, 200, { ok: true }), { public: true });
   router.get('/api/version', ({ req, res, url }) => handleVersion(req, res, url), { public: true });
+  router.get('/api/update/status', ({ req, res }) => handleUpdateStatus(req, res));
+  router.post('/api/update/install', ({ req, res }) => handleUpdateInstall(req, res));
   router.get('/api/auth/status', ({ req, res }) => handleAuthStatus(req, res), { public: true });
   router.post('/api/auth/register', ({ req, res }) => handleRegister(req, res), { public: true });
   router.post('/api/auth/login', ({ req, res }) => handleLogin(req, res), { public: true });

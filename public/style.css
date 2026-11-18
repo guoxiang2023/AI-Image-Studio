@@ -3671,6 +3671,48 @@ h5.document-preview-heading {
   line-height: 1.65;
 }
 
+.update-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.update-progress-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bubble);
+  overflow: hidden;
+}
+
+.update-progress-bar {
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.25s ease;
+}
+
+.update-progress-bar.is-error {
+  background: var(--danger);
+}
+
+.update-progress-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.update-progress-percent {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
 .update-assets {
   display: flex;
   flex-direction: column;

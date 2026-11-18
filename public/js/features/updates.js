@@ -4,6 +4,8 @@ import { renderMarkdown } from '../core/markdown.js';
 let current = null;
 let pending = null;
 let notified = false;
+let install = null;
+let pollTimer = null;
 
 function formatSize(bytes) {
   const value = Number(bytes) || 0;
@@ -43,6 +45,48 @@ function renderAssets(assets) {
   els.updateAssetsWrap.hidden = false;
 }
 
+const INSTALL_LABELS = {
+  downloading: '正在下载',
+  installing: '正在安装',
+  restarting: '正在重启',
+};
+
+function renderInstall(state) {
+  const data = state || { supported: false };
+  const busy = ['downloading', 'installing', 'restarting'].includes(data.state);
+  els.updateInstallWrap.hidden = !data.supported;
+  els.updateInstall.hidden = !data.supported || data.state === 'restarting';
+  els.updateInstall.disabled = busy;
+  els.updateInstall.textContent = busy
+    ? INSTALL_LABELS[data.state] || '更新中…'
+    : '立即更新并重启';
+
+  els.updateProgressPercent.textContent = `${Math.min(100, Math.round(data.percent || 0))}%`;
+  els.updateProgressBar.style.width = `${Math.min(100, data.percent || 0)}%`;
+  els.updateProgressBar.classList.toggle('is-error', data.state === 'error');
+
+  const size = data.total
+    ? `${formatSize(data.received) || '0 B'} / ${formatSize(data.total)}`
+    : '';
+  els.updateProgressText.textContent = data.error
+    ? data.error
+    : data.state === 'restarting'
+      ? '安装完成，应用正在重启…'
+      : busy
+        ? `${INSTALL_LABELS[data.state]}${size ? ` · ${size}` : ''}`
+        : data.supported
+          ? '更新会下载安装包并自动重启应用；会话与数据保存在本地，不会丢失。'
+          : data.reason || '';
+
+  if (busy) {
+    els.closeUpdate.disabled = true;
+    els.cancelUpdate.disabled = true;
+  } else {
+    els.closeUpdate.disabled = false;
+    els.cancelUpdate.disabled = false;
+  }
+}
+
 export function renderUpdate(info) {
   const data = info || {};
   const hasUpdate = Boolean(data.hasUpdate);
@@ -68,6 +112,54 @@ export function renderUpdate(info) {
   renderMarkdown(els.updateNotes, notes);
   els.updateNotesWrap.hidden = !notes;
   renderAssets(hasUpdate ? data.assets : []);
+  renderInstall(hasUpdate ? install : { supported: false });
+  // Reopening the modal mid-update must keep tracking the running job.
+  if (hasUpdate && ['downloading', 'installing'].includes(install?.state)) pollInstall();
+}
+
+async function refreshInstallStatus() {
+  try {
+    install = await api('/api/update/status');
+  } catch {
+    install = { supported: false, reason: '无法获取更新状态' };
+  }
+  return install;
+}
+
+function stopPolling() {
+  clearTimeout(pollTimer);
+  pollTimer = null;
+}
+
+function pollInstall() {
+  stopPolling();
+  pollTimer = setTimeout(async () => {
+    const state = await refreshInstallStatus();
+    renderInstall(state);
+    if (state.state === 'downloading' || state.state === 'installing') {
+      pollInstall();
+      return;
+    }
+    if (state.state === 'restarting') {
+      els.updateProgressText.textContent = '安装完成，应用正在重启…';
+      return;
+    }
+    if (state.state === 'error') toast(state.error || '更新失败');
+  }, 600);
+}
+
+export async function startInstall() {
+  els.updateInstall.disabled = true;
+  els.updateProgressText.textContent = '正在准备更新…';
+  try {
+    install = await api('/api/update/install', { method: 'POST' });
+    renderInstall(install);
+    pollInstall();
+  } catch (error) {
+    install = { ...(install || {}), state: 'error', error: error?.message || '更新失败' };
+    renderInstall(install);
+    toast(install.error);
+  }
 }
 
 export function openUpdateModal() {
@@ -77,6 +169,8 @@ export function openUpdateModal() {
 }
 
 export function closeUpdateModal() {
+  if (['downloading', 'installing', 'restarting'].includes(install?.state)) return;
+  stopPolling();
   els.updateModal.hidden = true;
 }
 
@@ -95,9 +189,10 @@ export async function checkForUpdates({ force = false, showModal = false, notify
     els.updateError.textContent = '';
   }
   pending = api(`/api/version${force ? '?refresh=1' : ''}`)
-    .then((info) => {
+    .then(async (info) => {
       current = info;
       applyVersion(info);
+      if (info.hasUpdate) install = await refreshInstallStatus();
       if (showModal || !els.updateModal.hidden) renderUpdate(info);
       if (info.hasUpdate && !notified) {
         notified = true;

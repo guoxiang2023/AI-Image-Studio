@@ -169,6 +169,29 @@ DELETE /api/documents/:id        # 删除
 
 策划或配图请求失败时自动降级为确定性大纲/已筛候选图；章节或导语超限时保留已生成部分，不因单次输出预算中止。只有章节请求完全无内容、用户取消或总超时才报错。文档子调用会显式关闭 Anthropic-compatible 网关的隐藏 thinking，避免推理 tokens 吃光可见输出；分章仍保留续写兜底。PDF 会自动查找系统 CJK 字体，也可用 `DOCUMENT_PDF_FONT` 指定。
 
+## 会话重命名
+
+```text
+PATCH /api/sessions/:id  { "title": "新的会话名称" }  ->  { ok, title }
+```
+
+名称会去掉首尾空白并合并连续空白，最长 60 个字符；只更新标题，不改 `updated_at`，因此不会打乱列表顺序。归档会话同样可以重命名。
+
+## 应用内更新
+
+```text
+GET  /api/version         -> { currentVersion, latestVersion, hasUpdate, notes, assets[] }
+GET  /api/update/status   -> { state, percent, received, total, supported, reason, error }
+POST /api/update/install  -> 立即返回进度状态，安装在后台继续
+```
+
+- `update-service.js` 读取 GitHub Release，并为每个资产带上 `sha256`（来自 Release API 的 `digest`）；`selectAsset` 按 `platform` + `arch` 选包，Windows on ARM 回退到 x64。
+- `update-install-service.js` 持有单例任务状态：`downloading → installing → restarting`，失败变 `error`。`POST` 立即返回，前端轮询 `status` 渲染进度。
+- `desktop-updater.cjs` 是平台细节：`.part` 文件 + `Range` 续传 + 指数退避重试，SHA-256 校验后原子改名；macOS 用 `hdiutil` 挂载、`ditto` 暂存、退出后脚本替换 `.app` 并重新 `open`，失败回滚；Windows 用 NSIS `/S --updated --force-run` 静默安装并自动拉起。
+- 更新过程不提权：不调用 `osascript ... with administrator privileges`，也不清除 quarantine。macOS 在下载前用 `assertWritableTarget` 检查安装目录可写性，不可写返回 403 并提示手动安装；替换阶段若 `mv` 失败以退出码 11 中止，旧 bundle 保持不变。
+- 桌面进程通过 `setDesktopUpdater` 注入 `isPackaged/platform/arch/exePath/stagingDir/logPath/quit`；没有注入时（Web/Docker）状态为 `supported: false`，`POST` 直接返回 400。
+- 只接受 HTTPS 且主机在 GitHub 名单内的下载地址，重定向同样校验，避免把更新指向任意来源。
+
 ## 会话导出 / 导入
 
 ```text

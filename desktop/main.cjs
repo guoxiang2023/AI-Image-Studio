@@ -7,6 +7,7 @@ const {
   shell,
 } = require('electron');
 const path = require('node:path');
+const fs = require('node:fs');
 
 const APP_NAME = 'Luma';
 const APP_ID = 'com.luma.imagegen';
@@ -42,7 +43,9 @@ if (!app.requestSingleInstanceLock()) {
 async function start() {
   configureEnvironment();
   const { startServer } = await import('../src/bootstrap/start-server.js');
+  const { setDesktopUpdater } = await import('../src/shared/runtime.js');
   runtime = await startServer({ host: '127.0.0.1', port: 0 });
+  setDesktopUpdater(createUpdaterHooks());
   setupDownloads();
   installMenu();
   createWindow();
@@ -57,6 +60,21 @@ function configureEnvironment() {
   process.env.HOST = '127.0.0.1';
   process.env.PORT = '0';
   if (process.env.ALLOW_REGISTRATION === undefined) process.env.ALLOW_REGISTRATION = '1';
+}
+
+function createUpdaterHooks() {
+  const stagingDir = path.join(app.getPath('userData'), 'updates');
+  const logDir = path.join(app.getPath('userData'), 'logs');
+  fs.mkdirSync(logDir, { recursive: true });
+  return {
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+    arch: process.arch,
+    exePath: app.getPath('exe'),
+    stagingDir,
+    logPath: path.join(logDir, 'updater.log'),
+    quit: () => app.quit(),
+  };
 }
 
 function createWindow() {

@@ -85,6 +85,10 @@ jobs:
         with:
           path: release-assets
           merge-multiple: true
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: echo "number=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
       - name: Inspect assets
         run: ls -lh release-assets
       - name: Verify downloaded DMG integrity
@@ -97,6 +101,15 @@ jobs:
           for dmg in "${dmgs[@]}"; do
             hdiutil verify "$dmg"
           done
+      - name: Verify in-app updater assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.number }}"
+          for name in "Luma-$version-mac-arm64.dmg" "Luma-$version-mac-x64.dmg" "Luma-$version-win-x64.exe"; do
+            test -f "release-assets/$name" || { echo "missing $name"; exit 1; }
+          done
+          echo "all three installers present for $version"
       - name: Remove non-installer assets
         uses: actions/github-script@v7
         with:
@@ -117,46 +130,34 @@ jobs:
             }
       - uses: softprops/action-gh-release@v2
         with:
-          name: Luma v1.0.7
+          name: Luma ${{ github.ref_name }}
           body: |
-            ## Luma v1.0.7
+            ## Luma ${{ github.ref_name }}
 
-            ### 对话
+            ### 应用内更新
 
-            - 每条消息显示发送时间；助手回复显示本轮用时，生成过程中按秒实时计时
-            - 会话生成期间可以切换其他会话或新建对话，生成在后台继续；回到原会话会回放流式内容、状态和已生成图片
-
-            ### 文档生成
-
-            - 改为“完整对话 → 分块事实摘要 → 语义归并 → 总—分—总大纲 → 逐章生成”，长对话不再被滚动摘要或单次上下文预算截断
-            - 每章只携带相关对话片段，数据库章节优先保留字段表；输出预算拆分为大纲 2,048 / 导语 2,048 / 章节 4,096 tokens，并显式关闭 Anthropic 兼容网关的隐藏 thinking
-            - 大纲或配图请求失败时自动降级为确定性大纲、已筛选候选图；章节截断自动续写，仍超限时保留已生成部分；总超时提升到 600 秒
-            - Word、PDF 与文档预览支持 Markdown 表格，数据字典、接口字段可直接成表
-            - 文档默认标题由「Luma 文档」改为「文档」，DOCX 不再写入 Luma 作者与标题元数据
-
-            ### 修复
-
-            - 修复切换会话或新建对话会中止正在生成的回复、并让流式进度丢失的问题；生成状态改为按会话保留
+            - 桌面端可直接在「版本更新」中点击「立即更新并重启」：下载对应平台安装包、校验 SHA-256、静默安装并自动重启，不再需要手动下载覆盖安装
+            - macOS 在应用退出后原地替换 `.app`，替换失败自动回滚；安装位置不可写时直接提示手动安装，不做任何提权
+            - Windows 以 `/S --updated --force-run` 静默安装，装完自动拉起应用
+            - 会话、模型配置与图片保存在本地数据目录，更新不会影响
 
             ### 说明
 
-            - 本次以相同版本号 1.0.7 重新构建并覆盖今日发布的同名安装包；已安装 1.0.7 的用户重新下载覆盖安装即可
+            - 校验值取自本 Release 的资产 `digest`；缺少校验值时应用内更新会拒绝执行并提示手动下载
             - 若使用的模型输出上限更低，请在「模型设置」中降低推理等级后重试
 
             ### 更新方式
 
-            1. 打开「版本更新」，选择对应平台的安装包下载
-            2. macOS：打开 DMG，将「Luma」拖入 Applications，覆盖旧版本
-            3. Windows：运行 EXE 安装包，按提示覆盖安装
-            4. Release 仅提供安装包，不包含自动更新元数据或 blockmap
+            1. 桌面端：打开「版本更新」→「立即更新并重启」，应用会自动完成下载、安装与重启
+            2. 如果应用内更新不可用（例如系统策略限制），仍可手动下载对应平台安装包覆盖安装
 
             ### 下载
 
             | 平台 | 安装包 |
             | --- | --- |
-            | macOS Apple Silicon（M 系列） | `Luma-1.0.7-mac-arm64.dmg` |
-            | macOS Intel | `Luma-1.0.7-mac-x64.dmg` |
-            | Windows x64 | `Luma-1.0.7-win-x64.exe` |
+            | macOS Apple Silicon（M 系列） | `Luma-${{ steps.version.outputs.number }}-mac-arm64.dmg` |
+            | macOS Intel | `Luma-${{ steps.version.outputs.number }}-mac-x64.dmg` |
+            | Windows x64 | `Luma-${{ steps.version.outputs.number }}-win-x64.exe` |
 
             ### 安装说明
 

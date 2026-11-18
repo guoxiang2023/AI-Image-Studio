@@ -1,5 +1,6 @@
 let secretBox = null;
 let dummyPasswordHash = '';
+let desktopUpdater = null;
 
 export function setSecretBox(value) {
   secretBox = value;
@@ -16,4 +17,12 @@ export function setDummyPasswordHash(value) {
 
 export function getDummyPasswordHash() {
   return dummyPasswordHash;
+}
+
+export function setDesktopUpdater(value) {
+  desktopUpdater = value;
+}
+
+export function getDesktopUpdater() {
+  return desktopUpdater;
 }

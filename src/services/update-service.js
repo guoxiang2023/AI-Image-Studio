@@ -47,6 +47,38 @@ function baseInfo() {
   };
 }
 
+const PLATFORM_ASSET = {
+  darwin: { ext: 'dmg', prefix: 'mac' },
+  win32: { ext: 'exe', prefix: 'win' },
+};
+
+function assetArch(name, prefix) {
+  const match = new RegExp(`-${prefix}-(arm64|x64|ia32)\\.(?:dmg|exe)$`, 'i').exec(name);
+  return match ? match[1].toLowerCase() : '';
+}
+
+function digestValue(raw) {
+  const value = String(raw || '').trim();
+  const match = /^sha256:([0-9a-f]{64})$/i.exec(value);
+  if (match) return match[1].toLowerCase();
+  return /^[0-9a-f]{64}$/i.test(value) ? value.toLowerCase() : '';
+}
+
+// Pick the installer matching this machine; falls back to x64 on Windows-on-ARM.
+export function selectAsset(assets, { platform, arch } = {}) {
+  const spec = PLATFORM_ASSET[platform];
+  if (!spec || !Array.isArray(assets)) return null;
+  const wanted = String(arch || '').toLowerCase();
+  const candidates = assets.filter(
+    (asset) =>
+      asset?.name && asset?.url && new RegExp(`-${spec.prefix}-(arm64|x64|ia32)\\.${spec.ext}$`, 'i').test(asset.name),
+  );
+  if (!candidates.length) return null;
+  const exact = candidates.find((asset) => assetArch(asset.name, spec.prefix) === wanted);
+  if (exact) return exact;
+  return candidates.find((asset) => assetArch(asset.name, spec.prefix) === 'x64') || candidates[0];
+}
+
 function cacheAge(data) {
   return data?.error ? ERROR_CACHE_MS : UPDATE_CACHE_MS;
 }
@@ -105,6 +137,7 @@ export async function checkForUpdate({ force = false } = {}) {
             name: String(asset.name || ''),
             url: String(asset.browser_download_url || ''),
             size: Number(asset.size) || 0,
+            sha256: digestValue(asset.digest),
           }))
           .filter((asset) => asset.name && asset.url)
       : [];
