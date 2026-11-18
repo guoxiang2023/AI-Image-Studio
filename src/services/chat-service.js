@@ -4,6 +4,8 @@ import {
   insertChat,
   listChats as listChatRows,
   setChatArchived as setChatArchivedRow,
+  setChatTitle as setChatTitleRow,
+  setChatTitleIfEmpty as setChatTitleIfEmptyRow,
   updateChat,
   updateChatSummary,
 } from '../data/repositories/chats.js';
@@ -42,6 +44,9 @@ export function loadChatForUser(userId, id) {
 }
 
 export function saveChat(chat) {
+  // A turn saves drafts while it streams. Persist the generated title only for
+  // a brand-new session, so a rename made during the turn is never overwritten.
+  setChatTitleIfEmptyRow(chat.userId, chat.id, chat.title);
   chat.updatedAt = now();
   updateChat(serializeChat(chat));
 }
@@ -55,6 +60,10 @@ export function listSessions(userId, { archived = false } = {}) {
     cover: row.cover_url,
     archivedAt: row.archived_at || null,
   }));
+}
+
+export function renameUserChat(userId, chatId, title) {
+  return setChatTitleRow(userId, chatId, title);
 }
 
 export function setUserChatArchived(userId, chatId, archived) {

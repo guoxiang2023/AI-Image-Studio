@@ -38,13 +38,12 @@ export function insertChat(chat) {
 export function updateChat(chat) {
   getDb()
     .prepare(
-      `UPDATE chats SET title = ?, updated_at = ?, last_image_id = ?, cover_url = ?, messages_json = ?,
+      `UPDATE chats SET updated_at = ?, last_image_id = ?, cover_url = ?, messages_json = ?,
          summary = CASE WHEN summary_upto > ? THEN summary ELSE ? END,
          summary_upto = CASE WHEN summary_upto > ? THEN summary_upto ELSE ? END
        WHERE id = ? AND user_id = ?`,
     )
     .run(
-      chat.title,
       chat.updatedAt,
       chat.lastImageId,
       chat.coverUrl,
@@ -58,6 +57,14 @@ export function updateChat(chat) {
     );
 }
 
+export function setChatTitleIfEmpty(userId, id, title) {
+  return (
+    getDb()
+      .prepare("UPDATE chats SET title = ? WHERE id = ? AND user_id = ? AND title = ''")
+      .run(title, id, userId).changes > 0
+  );
+}
+
 export function updateChatSummary(userId, id, summary, upto) {
   getDb()
     .prepare(
@@ -67,6 +74,14 @@ export function updateChatSummary(userId, id, summary, upto) {
        WHERE id = ? AND user_id = ?`,
     )
     .run(upto, summary, upto, upto, id, userId);
+}
+
+export function setChatTitle(userId, id, title) {
+  return (
+    getDb()
+      .prepare('UPDATE chats SET title = ? WHERE id = ? AND user_id = ?')
+      .run(title, id, userId).changes > 0
+  );
 }
 
 export function setChatArchived(userId, id, archivedAt) {

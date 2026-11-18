@@ -4,6 +4,7 @@ import {
   deleteUserChat,
   listSessions,
   loadChatForUser,
+  renameUserChat,
   setUserChatArchived,
   updateSummary,
 } from '../../services/chat-service.js';
@@ -22,12 +23,37 @@ export function handleListSessions(req, res, user) {
   return json(res, 200, listSessions(user.id, { archived }));
 }
 
+const SESSION_TITLE_MAX = 60;
+
+function normalizeSessionTitle(value) {
+  if (typeof value !== 'string') return { error: 'title 必须是字符串' };
+  const title = value
+    .replace(/[\u0000-\u001F\u007F\u200E\u200F\u202A-\u202E]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!title) return { error: '会话名称不能为空' };
+  if (Array.from(title).length > SESSION_TITLE_MAX) {
+    return { error: `会话名称不能超过 ${SESSION_TITLE_MAX} 个字符` };
+  }
+  return { title };
+}
+
 export async function handleSession(req, res, user, sessionId) {
   const chat = loadChatForUser(user.id, sessionId);
   if (!chat) return json(res, 404, { error: '会话不存在' });
   if (req.method === 'GET') return json(res, 200, chatToClient(chat));
   if (req.method === 'PATCH') {
     const body = await readJsonBody(req);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return json(res, 400, { error: '请求体必须是 JSON 对象' });
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'title')) {
+      const result = normalizeSessionTitle(body.title);
+      if (result.error) return json(res, 400, { error: result.error });
+      const ok = renameUserChat(user.id, chat.id, result.title);
+      if (!ok) return json(res, 404, { error: '会话不存在' });
+      return json(res, 200, { ok: true, title: result.title });
+    }
     if (typeof body.archived !== 'boolean') {
       return json(res, 400, { error: 'archived 必须是布尔值' });
     }

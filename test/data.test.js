@@ -15,6 +15,8 @@ import {
   insertChat,
   listChats,
   setChatArchived,
+  setChatTitle,
+  setChatTitleIfEmpty,
   updateChat,
   updateChatSummary,
 } from '../src/data/repositories/chats.js';
@@ -70,10 +72,15 @@ test('chat repository round-trips serialized documents', () => {
   assert.equal(listChats('u1')[0].id, 'c1');
   assert.equal(getChat('u1', 'c1').title, 'hello');
   updateChat({ ...document, title: 'updated', updatedAt: 3 });
+  assert.equal(getChat('u1', 'c1').title, 'hello');
+  setChatTitle('u1', 'c1', 'updated');
+  assert.equal(getChat('u1', 'c1').title, 'updated');
+  assert.equal(getChat('u1', 'c1').updated_at, 3);
+  assert.equal(setChatTitleIfEmpty('u1', 'c1', 'ignored'), false);
   assert.equal(getChat('u1', 'c1').title, 'updated');
   updateChatSummary('u1', 'c1', 'newer memory', 5);
   updateChat({ ...document, title: 'stale', summary: 'stale memory', summaryUpto: 2 });
-  assert.equal(getChat('u1', 'c1').title, 'stale');
+  assert.equal(getChat('u1', 'c1').title, 'updated');
   assert.equal(getChat('u1', 'c1').summary, 'newer memory');
   assert.equal(getChat('u1', 'c1').summary_upto, 5);
   updateChatSummary('u1', 'c1', 'older memory', 3);

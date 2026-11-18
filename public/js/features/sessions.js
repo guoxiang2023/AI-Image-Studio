@@ -123,6 +123,92 @@ export async function importSessionFile(file) {
   }
 }
 
+function startInlineRename(item, session, nameNode) {
+  if (item.querySelector('.session-rename-input')) return;
+  const input = el('input', 'session-rename-input');
+  input.type = 'text';
+  input.value = session.title || '';
+  input.maxLength = 60;
+  input.autocomplete = 'off';
+  input.setAttribute('aria-label', '会话名称');
+  input.addEventListener('click', (ev) => ev.stopPropagation());
+  input.addEventListener('mousedown', (ev) => ev.stopPropagation());
+  nameNode.replaceWith(input);
+  item.classList.add('is-renaming');
+
+  let settled = false;
+  const finish = async () => {
+    if (settled) return;
+    settled = true;
+    const cancelled = input.dataset.cancelled === '1';
+    const title = input.value.trim();
+    if (!cancelled && title && title !== (session.title || '')) {
+      const saved = await renameSession(session.id, title);
+      renderSessionList();
+      if (saved) showRenameSaved(session.id);
+      return;
+    }
+    renderSessionList();
+  };
+  input.addEventListener('keydown', (ev) => {
+    ev.stopPropagation();
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      input.blur();
+    } else if (ev.key === 'Escape') {
+      ev.preventDefault();
+      input.dataset.cancelled = '1';
+      input.blur();
+    }
+  });
+  input.addEventListener('blur', finish);
+  input.focus();
+  input.select();
+}
+
+function createRenameButton(item, session, nameNode) {
+  const rename = el('button', 'session-archive session-rename');
+  rename.type = 'button';
+  rename.title = '重命名会话';
+  rename.setAttribute('aria-label', `重命名 ${session.title || '新对话'}`);
+  rename.appendChild(icon('pencil'));
+  rename.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    startInlineRename(item, session, nameNode);
+  });
+  return rename;
+}
+
+function showRenameSaved(id) {
+  const item = els.sessionList.querySelector(`.session-item[data-id="${id}"]`);
+  if (!item) return;
+  item.classList.add('is-renamed');
+  item.appendChild(el('span', 'session-saved', '已保存'));
+  setTimeout(() => {
+    item.classList.remove('is-renamed');
+    item.querySelector('.session-saved')?.remove();
+  }, 2200);
+}
+
+export async function renameSession(id, title) {
+  const next = String(title || '').trim();
+  if (!next) return false;
+  try {
+    const data = await api(`/api/sessions/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: next }),
+    });
+    const session = state.sessions.find((item) => item.id === id);
+    if (session) session.title = data.title || next;
+    if (state.sessionId === id) setTitle(data.title || next);
+    return true;
+  } catch (error) {
+    toast(error.message);
+    return false;
+  }
+}
+
 export function renderSessionList() {
   const archivedMode = state.sessionFilter === 'archived';
   els.sessionLabel.textContent = archivedMode ? '已归档' : '我的会话';
@@ -156,11 +242,13 @@ export function renderSessionList() {
     }
 
     const meta = el('div', 'session-meta');
-    meta.appendChild(el('div', 'session-name', s.title || '新对话'));
+    const nameNode = el('div', 'session-name', s.title || '新对话');
+    meta.appendChild(nameNode);
     meta.appendChild(el('div', 'session-date', formatTime(s.updatedAt)));
     item.appendChild(meta);
 
     const actions = el('div', 'session-actions');
+    actions.appendChild(createRenameButton(item, s, nameNode));
     if (archivedMode) {
       const restore = el('button', 'session-restore', '恢复');
       restore.type = 'button';

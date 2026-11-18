@@ -763,6 +763,22 @@ html[data-theme="light"] .ico-moon {
   white-space: nowrap;
 }
 
+.session-rename-input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  margin: -2px 0;
+  padding: 1px 5px;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--fg);
+  background: var(--panel-3);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  outline: none;
+}
+
 .session-date {
   font-family: var(--mono);
   font-size: 9.5px;
@@ -782,6 +798,30 @@ html[data-theme="light"] .ico-moon {
 .session-item.active .session-actions,
 .session-item:focus-within .session-actions {
   opacity: 1;
+}
+
+.session-item.is-renaming .session-actions,
+.session-item.is-renamed .session-actions {
+  display: none;
+}
+
+.session-item.is-renamed {
+  border-color: var(--accent);
+}
+
+.session-saved {
+  position: absolute;
+  right: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
+  line-height: 1.5;
+  pointer-events: none;
+  animation: rise 0.18s ease;
 }
 
 .session-archive {
