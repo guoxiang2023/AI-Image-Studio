@@ -259,6 +259,15 @@ function createAssistantMessage(message) {
     }
     body.appendChild(grid);
   }
+  if (message.process) {
+    const details = el('details', 'msg-process');
+    details.open = true;
+    details.appendChild(el('summary', '', '思考过程'));
+    const processBody = el('div', 'process-body');
+    renderMarkdown(processBody, message.process);
+    details.appendChild(processBody);
+    body.appendChild(details);
+  }
   if (message.content) {
     const content = el('div', 'msg-content');
     renderMarkdown(content, message.content);
@@ -317,10 +326,17 @@ export function createAssistantShell({ startedAt = Date.now() } = {}) {
   meta.appendChild(time);
   meta.appendChild(duration);
   const grid = el('div', 'image-grid');
+  const process = el('details', 'msg-process');
+  process.hidden = true;
+  process.open = true;
+  process.appendChild(el('summary', '', '思考过程'));
+  const processBody = el('div', 'process-body');
+  process.appendChild(processBody);
   const images = [];
   const getGroupImages = (target) =>
     images.filter((item) => item.groupId && item.groupId === target.groupId);
   let text = '';
+  let processText = '';
   let frame = 0;
   let timer = null;
 
@@ -343,6 +359,10 @@ export function createAssistantShell({ startedAt = Date.now() } = {}) {
       content.innerHTML = '';
     }
   };
+  const renderProcess = () => {
+    process.hidden = !processText;
+    renderMarkdown(processBody, processText);
+  };
   const schedulePaint = () => {
     if (frame) return;
     frame = requestAnimationFrame(() => {
@@ -359,6 +379,7 @@ export function createAssistantShell({ startedAt = Date.now() } = {}) {
 
   body.appendChild(grid);
   body.appendChild(status);
+  body.appendChild(process);
   body.appendChild(content);
   body.appendChild(meta);
   wrap.appendChild(body);
@@ -387,6 +408,24 @@ export function createAssistantShell({ startedAt = Date.now() } = {}) {
       cancelPaint();
       text = '';
       paint();
+      status.hidden = false;
+      statusText.textContent = '整理结果…';
+      scrollBottom();
+    },
+    setProcess(value) {
+      processText = String(value || '');
+      renderProcess();
+      scrollBottom();
+    },
+    promoteTextToProcess() {
+      const kept = text.trim();
+      cancelPaint();
+      text = '';
+      paint();
+      if (kept) {
+        processText = processText ? `${processText}\n\n${kept}` : kept;
+        renderProcess();
+      }
       status.hidden = false;
       statusText.textContent = '整理结果…';
       scrollBottom();

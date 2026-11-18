@@ -71,6 +71,7 @@ export async function send() {
     finishedAt: 0,
     durationMs: 0,
     content: '',
+    process: '',
     images: [],
     status: '思考中…',
     error: '',
@@ -99,8 +100,15 @@ export async function send() {
       stream.content += event.text;
       if (sameView()) ensureStreamShell(stream)?.appendText(event.text);
     } else if (event.type === 'reset') {
-      stream.content = '';
-      if (sameView()) ensureStreamShell(stream)?.resetText();
+      if (event.keep && stream.content.trim()) {
+        const kept = stream.content.trim();
+        stream.process = stream.process ? `${stream.process}\n\n${kept}` : kept;
+        stream.content = '';
+        if (sameView()) ensureStreamShell(stream)?.promoteTextToProcess();
+      } else {
+        stream.content = '';
+        if (sameView()) ensureStreamShell(stream)?.resetText();
+      }
     } else if (event.type === 'image') {
       const image = {
         id: event.id,

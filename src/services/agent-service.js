@@ -31,6 +31,7 @@ export async function runAgent(ctx) {
   const messages = [{ role: 'system', content: system }, ...history];
   const maxSteps = 6;
   let text = '';
+  const processParts = [];
 
   for (let step = 0; step < maxSteps; step += 1) {
     ctx.emit({ type: 'status', text: step === 0 ? '理解需求…' : '整理结果…' });
@@ -77,8 +78,13 @@ export async function runAgent(ctx) {
       requestCount: 1,
     });
     if (calls.length) {
-      // Any text before a tool call is a preamble, not the final answer.
-      if (streamed.trim()) ctx.emit({ type: 'reset' });
+      // Text before a tool call is analysis, not the final answer. Keep it as
+      // the turn's process so the client can show what the model concluded
+      // before acting instead of erasing it.
+      if (streamed.trim()) {
+        processParts.push(streamed.trim());
+        ctx.emit({ type: 'reset', keep: true });
+      }
       messages.push({
         role: 'assistant',
         content: message.content || '',
@@ -107,5 +113,5 @@ export async function runAgent(ctx) {
         ? '图片已生成。'
         : '抱歉，我没有理解你的需求，可以换个说法再试一次。';
   }
-  return { text };
+  return { text, process: processParts.join('\n\n') };
 }

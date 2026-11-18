@@ -24,6 +24,7 @@ export function syncStreamingState() {
 
 function paintStream(stream, shell) {
   for (const image of stream.images) shell.addImage(image);
+  if (stream.process) shell.setProcess(stream.process);
   if (stream.content) shell.setText(stream.content);
   if (stream.finishedAt) shell.setTime(stream.finishedAt);
   if (stream.durationMs) shell.setDuration(stream.durationMs);

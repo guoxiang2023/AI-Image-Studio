@@ -141,6 +141,10 @@ export async function runPreparedTurn({ user, prepared, emit, signal }) {
         draft.content += event.text;
         saveDraft();
       } else if (event.type === 'reset') {
+        const kept = event.keep ? draft.content.trim() : '';
+        if (kept) {
+          draft.process = draft.process ? `${draft.process}\n\n${kept}` : kept;
+        }
         draft.content = '';
         saveDraft(true);
       } else if (event.type === 'image') {
@@ -171,7 +175,7 @@ export async function runPreparedTurn({ user, prepared, emit, signal }) {
     };
     chat.messages.push(draft);
 
-    const { text } = await runAgent({
+    const { text, process } = await runAgent({
       user,
       chat,
       models,
@@ -190,6 +194,7 @@ export async function runPreparedTurn({ user, prepared, emit, signal }) {
     const durationMs = elapsedMs();
     const finishedAt = now();
     draft.content = text;
+    if (process) draft.process = process;
     draft.images = turnImages;
     draft.ts = finishedAt;
     draft.durationMs = durationMs;

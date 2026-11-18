@@ -1579,6 +1579,65 @@ html[data-theme="light"] .ico-moon {
   color: var(--fg);
 }
 
+.msg-process {
+  max-width: 100%;
+  padding: 9px 13px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bubble);
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.msg-process[hidden] {
+  display: none;
+}
+
+.msg-process summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  list-style: none;
+  user-select: none;
+}
+
+.msg-process summary::-webkit-details-marker {
+  display: none;
+}
+
+.msg-process summary::before {
+  content: "▸";
+  font-size: 9px;
+  transition: transform 0.15s;
+}
+
+.msg-process[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.msg-process .process-body {
+  margin-top: 8px;
+  word-break: break-word;
+  color: var(--muted);
+}
+
+.msg-process .process-body > :first-child {
+  margin-top: 0;
+}
+
+.msg-process .process-body > :last-child {
+  margin-bottom: 0;
+}
+
+.msg-process .process-body p {
+  margin: 0 0 0.6em;
+}
+
 /* --------------------------------- images --------------------------------- */
 
 .image-grid {

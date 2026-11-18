@@ -228,6 +228,10 @@ function normalizeMessages(rawMessages, imageMap) {
       ts: Number.isFinite(Number(raw.ts)) ? Number(raw.ts) : now(),
     };
     if (images.length) message.images = images;
+    if (role === 'assistant' && typeof raw.process === 'string') {
+      const process = clipText(raw.process, MAX_MESSAGE_CHARS).trim();
+      if (process) message.process = process;
+    }
 
     if (role === 'user') {
       const references = normalizeReferences(raw.references, imageMap);
@@ -246,7 +250,9 @@ function normalizeMessages(rawMessages, imageMap) {
       if (attachments.length) message.attachments = attachments;
     }
 
-    if (role === 'assistant' && !message.content && !message.images?.length) continue;
+    if (role === 'assistant' && !message.content && !message.images?.length && !message.process) {
+      continue;
+    }
     messages.push(message);
     if (messages.length > MAX_MESSAGES) {
       throw new AppError(400, `会话消息过多（最多 ${MAX_MESSAGES} 条）`);

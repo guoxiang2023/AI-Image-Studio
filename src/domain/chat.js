@@ -111,7 +111,15 @@ export function chatToClient(chat) {
     summaryUpto: chat.summaryUpto || 0,
     archivedAt: chat.archivedAt || null,
     messages: chat.messages
-      .filter((message) => !(message.draft && !message.content && !(message.images?.length)))
+      .filter(
+        (message) =>
+          !(
+            message.draft &&
+            !message.content &&
+            !message.images?.length &&
+            !String(message.process || '').trim()
+          ),
+      )
       .map((message) => {
         if (!Array.isArray(message.attachments) || !message.attachments.length) return message;
         return {

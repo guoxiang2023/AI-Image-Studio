@@ -65,6 +65,7 @@ test('exports and imports a session with portable images and attachments', async
       {
         role: 'assistant',
         content: '已生成两版',
+        process: '用户要两张海报，先出两版再挑选。',
         ts: 2,
         images: [
           {
@@ -93,6 +94,12 @@ test('exports and imports a session with portable images and attachments', async
           },
         ],
       },
+      {
+        role: 'assistant',
+        content: '',
+        process: '先记下用户的偏好，下一轮再用。',
+        ts: 3,
+      },
     ]),
     summary: '旧摘要',
     summaryUpto: 1,
@@ -111,7 +118,7 @@ test('exports and imports a session with portable images and attachments', async
   const imported = await transfer.importSessionArchive({ id: userId }, exported.buffer);
   assert.notEqual(imported.id, sourceId);
   assert.equal(imported.title, '可复用的夜跑会话');
-  assert.equal(imported.messages, 2);
+  assert.equal(imported.messages, 3);
   assert.equal(imported.images, 2);
 
   const chat = loadChatForUser(userId, imported.id);
@@ -125,6 +132,9 @@ test('exports and imports a session with portable images and attachments', async
   assert.ok(await findImageFile(userId, reference.id));
 
   const [oldFirst, oldSecond] = chat.messages[1].images;
+  assert.equal(chat.messages[1].process, '用户要两张海报，先出两版再挑选。');
+  assert.equal(chat.messages[2].process, '先记下用户的偏好，下一轮再用。');
+  assert.equal(chat.messages[2].content, '');
   assert.notEqual(oldFirst.id, first.id);
   assert.notEqual(oldSecond.id, second.id);
   assert.equal(oldSecond.parentId, oldFirst.id);
