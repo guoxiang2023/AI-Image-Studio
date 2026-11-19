@@ -36,7 +36,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/electron-cache
-          key: electron-${{ runner.os }}-${{ runner.arch }}-45.2.1
+          # Keyed only by platform: the Electron version comes from
+          # package-lock.json, and a stale entry is still a valid zip to reuse.
+          key: electron-${{ runner.os }}-${{ runner.arch }}
       - name: Build installer
         run: ${{ matrix.command }}
         env:
