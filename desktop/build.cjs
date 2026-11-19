@@ -2,8 +2,13 @@ const { spawnSync } = require('node:child_process');
 const path = require('node:path');
 
 const env = { ...process.env };
-const mirror = env.ELECTRON_MIRROR || '';
-if (!mirror || /(^|\.)taobao\.org/i.test(mirror)) {
+// Default to a domestic mirror for local builds, but never override an explicit
+// choice: CI runners reach GitHub directly and cannot always reach npmmirror.
+// LUMA_ELECTRON_MIRROR=none keeps the default official download host.
+const explicit = env.ELECTRON_MIRROR || '';
+if (explicit === 'none') {
+  delete env.ELECTRON_MIRROR;
+} else if (!explicit) {
   env.ELECTRON_MIRROR = 'https://npmmirror.com/mirrors/electron/';
 }
 

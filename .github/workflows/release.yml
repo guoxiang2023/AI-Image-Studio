@@ -32,10 +32,19 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - name: Cache Electron download
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/electron-cache
+          key: electron-${{ runner.os }}-${{ runner.arch }}-45.2.1
       - name: Build installer
         run: ${{ matrix.command }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          # A stalled Electron download is cut off after electron-builder's
+          # 10-minute request timeout, which is what failed the arm64 job.
+          # Keep the mirror and give each runner a warm cache.
+          ELECTRON_CACHE: ${{ runner.temp }}/electron-cache
       - name: Verify macOS native architecture
         if: startsWith(matrix.os, 'macos')
         shell: bash
