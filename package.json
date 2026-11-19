@@ -76,7 +76,7 @@
     "asarUnpack": [
       "node_modules/sharp/**/*",
       "node_modules/@img/**/*",
-      "node_modules/@napi-rs/**/*",
+      "node_modules/@napi-rs/canvas-*/**/*",
       "node_modules/dwgdxf/**/*",
       "node_modules/pdfjs-dist/**/*"
     ]
