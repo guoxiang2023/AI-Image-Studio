@@ -144,6 +144,10 @@ function headerValue(header, name) {
   return Number.isFinite(numeric) && pair[0] === '70' ? numeric : pair[1];
 }
 
+// Group codes differ per entity: a polyline stores every vertex as 10/20, but a
+// LINE keeps its two ends in 10/20 and 11/21, and TEXT/INSERT/DIMENSION carry a
+// single insertion point. Reading only 10/20 leaves every LINE and label with one
+// point, which the renderer then discards.
 function entityPoints(entity) {
   const points = [];
   let pending = null;
@@ -151,8 +155,14 @@ function entityPoints(entity) {
     if (code === '10') {
       pending = { x: Number(value), y: 0, bulge: 0 };
       points.push(pending);
-    } else if (code === '20' && pending) {
-      pending.y = Number(value);
+    } else if (code === '11') {
+      // Second endpoint of a LINE; anything else has no 11.
+      if (entity.type === 'LINE') {
+        pending = { x: Number(value), y: 0, bulge: 0 };
+        points.push(pending);
+      }
+    } else if (code === '20' || code === '21') {
+      if (pending) pending.y = Number(value);
     } else if (code === '42' && pending) {
       pending.bulge = Number(value) || 0;
     }
@@ -381,9 +391,13 @@ function buildSheetSvg(outline, unit, source) {
 </svg>`;
 }
 
+// Entities that carry no geometry of their own still mark a location. Drawing
+// them keeps a plan readable instead of silently dropping its labels and blocks.
+const POINT_LIKE = new Set(['TEXT', 'MTEXT', 'ATTRIB', 'INSERT', 'POINT', 'DIMENSION']);
+
 // Fallback picture: plot every entity the file contains so a mixed drawing keeps
 // its buildings, roads and annotations instead of collapsing to one outline.
-function buildEntitySvg(entities) {
+export function buildEntitySvg(entities) {
   const segments = [];
   for (const entity of entities) {
     const points = entityPoints(entity);
@@ -395,6 +409,17 @@ function buildEntitySvg(entities) {
         const r = Number(pair('40'));
         if ([cx, cy, r].every(Number.isFinite) && r > 0) {
           segments.push({ type: 'circle', cx, cy, r });
+          continue;
+        }
+      }
+      // A label or block reference is one insertion point: mark it rather than
+      // dropping it, so roads and buildings do not vanish from the sheet.
+      if (POINT_LIKE.has(entity.type)) {
+        const pair = (c) => entity.pairs.find(([code]) => code === c)?.[1];
+        const x = Number(pair('10'));
+        const y = Number(pair('20'));
+        if (Number.isFinite(x) && Number.isFinite(y)) {
+          segments.push({ type: 'point', x, y });
         }
       }
       continue;
@@ -409,6 +434,9 @@ function buildEntitySvg(entities) {
     if (seg.type === 'circle') {
       xs.push(seg.cx - seg.r, seg.cx + seg.r);
       ys.push(seg.cy - seg.r, seg.cy + seg.r);
+    } else if (seg.type === 'point') {
+      xs.push(seg.x);
+      ys.push(seg.y);
     } else {
       for (const p of seg.points) {
         xs.push(p.x);
@@ -435,6 +463,10 @@ function buildEntitySvg(entities) {
     .map((seg) => {
       if (seg.type === 'circle') {
         return `<circle cx="${tx(seg.cx).toFixed(2)}" cy="${ty(seg.cy).toFixed(2)}" r="${(seg.r * scale).toFixed(2)}" fill="none" stroke="#0b4f9c" stroke-width="1.4"/>`;
+      }
+      if (seg.type === 'point') {
+        const r = 2.4;
+        return `<circle cx="${tx(seg.x).toFixed(2)}" cy="${ty(seg.y).toFixed(2)}" r="${r}" fill="#0b4f9c" opacity="0.55"/>`;
       }
       const d = seg.points
         .map((p, i) => `${i ? 'L' : 'M'}${tx(p.x).toFixed(2)},${ty(p.y).toFixed(2)}`)

@@ -4,7 +4,13 @@ import { access, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
-import { analyzeEntities, isDwgBuffer, renderDwg, sheetBoundary } from '../src/media/dwg-image.js';
+import {
+  analyzeEntities,
+  buildEntitySvg,
+  isDwgBuffer,
+  renderDwg,
+  sheetBoundary,
+} from '../src/media/dwg-image.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -192,4 +198,72 @@ test('converts a real DWG into a dimensioned sheet', async (t) => {
     }
     assert.ok(rows.filter((n) => n > 0).length >= 6, `sparse sheet: ${rows.join(',')}`);
   }
+});
+
+test('a LINE keeps both endpoints instead of collapsing to a point', () => {
+  // A LINE stores its ends in 10/20 and 11/21. Reading only 10/20 left one
+  // point, which the fallback renderer then dropped: every road vanished.
+  const line = {
+    type: 'LINE',
+    pairs: pairs([
+      [0, 'LINE'],
+      [8, 'ROAD'],
+      [10, 0],
+      [20, 0],
+      [11, 100],
+      [21, 50],
+    ]),
+  };
+  const svg = buildEntitySvg([line]);
+  assert.ok(svg, 'a lone LINE must still produce a picture');
+  assert.equal((svg.match(/<path /g) || []).length, 1, 'the line must be drawn');
+});
+
+test('labels and block references survive the fallback renderer', () => {
+  // TEXT and INSERT carry one insertion point. Dropping them erased every
+  // annotation and tree symbol from a mixed drawing.
+  const text = {
+    type: 'TEXT',
+    pairs: pairs([
+      [0, 'TEXT'],
+      [8, 'NOTE'],
+      [10, 20],
+      [20, 30],
+      [1, 'ROAD'],
+    ]),
+  };
+  const insert = {
+    type: 'INSERT',
+    pairs: pairs([
+      [0, 'INSERT'],
+      [8, 'TREE'],
+      [10, 80],
+      [20, 20],
+      [2, 'TREE_BLOCK'],
+    ]),
+  };
+  const svg = buildEntitySvg([text, insert]);
+  assert.ok(svg, 'labels must not produce an empty picture');
+  assert.equal((svg.match(/<circle /g) || []).length, 2, 'both markers must be drawn');
+});
+
+test('a mixed drawing draws lines, circles and labels together', () => {
+  const entities = [
+    {
+      type: 'LINE',
+      pairs: pairs([[0, 'LINE'], [10, 0], [20, 0], [11, 100], [21, 50]]),
+    },
+    {
+      type: 'CIRCLE',
+      pairs: pairs([[0, 'CIRCLE'], [10, 50], [20, 50], [40, 10]]),
+    },
+    {
+      type: 'TEXT',
+      pairs: pairs([[0, 'TEXT'], [10, 20], [20, 30], [1, 'ROAD']]),
+    },
+  ];
+  const svg = buildEntitySvg(entities);
+  assert.ok(svg);
+  assert.equal((svg.match(/<path /g) || []).length, 1, 'the LINE must be a path');
+  assert.equal((svg.match(/<circle /g) || []).length, 2, 'circle plus label marker');
 });
