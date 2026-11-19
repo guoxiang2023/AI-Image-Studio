@@ -82,6 +82,8 @@ src/
     image-storage.js              # 文件路径、读写、尺寸探测
     document-storage.js           # 上传文档与提取文本的存储
     document-text.js              # txt / docx / xlsx / pptx / pdf 文字提取
+    pdf-images.js                 # PDF 内嵌位图提取 + 矢量页栅格化（用作参考图）
+    dwg-image.js                  # DWG→DXF→SVG→PNG，CAD 图纸渲染为参考图
     docx.js                       # WordprocessingML 与图片嵌入
     pdf.js                        # A4 PDF 排版、中文字体与图片嵌入
     zip-reader.js                 # OpenXML 压缩包的最小 ZIP 读取器

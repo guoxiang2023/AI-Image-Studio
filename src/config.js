@@ -26,9 +26,11 @@ export const SESSION_MS = 7 * 24 * 60 * 60 * 1000;
 export const COOKIE_NAME = 'luma_session';
 
 export const IMAGE_TIMEOUT = Number(process.env.IMAGE_TIMEOUT_SECONDS || 240);
+// Drawings exported from CAD routinely run 20-40 MB, so the ceiling is set for
+// real construction PDFs rather than for plain text documents.
 export const DOCUMENT_MAX_BYTES = Math.max(
   1024,
-  Number(process.env.DOCUMENT_MAX_BYTES || 10 * 1024 * 1024),
+  Number(process.env.DOCUMENT_MAX_BYTES || 50 * 1024 * 1024),
 );
 export const DOCUMENT_MAX_CHARS = Math.max(
   1000,
@@ -37,6 +39,13 @@ export const DOCUMENT_MAX_CHARS = Math.max(
 export const DOCUMENT_MAX_IMAGES = Math.max(
   1,
   Number(process.env.DOCUMENT_MAX_IMAGES || 60),
+);
+// Pictures offered as references from one uploaded PDF: embedded photos plus
+// screenshots of vector sheets. A construction drawing set routinely runs 20-40
+// pages, and a short drawing is useless, so this is per-document, not global.
+export const PDF_MAX_IMAGES = Math.max(
+  1,
+  Number(process.env.PDF_MAX_IMAGES || 40),
 );
 // Final images that actually enter the document. The candidate pool above can
 // be much larger; this is the cap the image planner prompt and parser enforce.

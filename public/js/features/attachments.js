@@ -8,7 +8,7 @@ import {
 } from '../core/index.js';
 
 export const MAX_ATTACHMENTS = 4;
-export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+export const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 
 const DOCUMENT_EXTS = new Set([
   'txt',
@@ -28,6 +28,7 @@ const DOCUMENT_EXTS = new Set([
   'xlsx',
   'pptx',
   'pdf',
+  'dwg',
 ]);
 
 export function documentExt(name) {
@@ -95,7 +96,61 @@ export function renderAttachments() {
     remove.addEventListener('click', () => removeAttachment(index));
     chip.appendChild(remove);
     els.attachmentSlot.appendChild(chip);
+    renderPdfImages(attachment.images, attachment.ext);
   });
+}
+
+// A PDF can yield two kinds of picture: bitmaps stored in the file, and whole
+// pages rendered to an image because a CAD sheet is vector-only. Both are
+// offered as ready-to-use reference images, labelled so it is obvious which is
+// an embedded photo and which is a screenshot of the drawing.
+function pdfImageLabel(images, ext) {
+  // A CAD file yields one rendered sheet, which is not a PDF page screenshot.
+  if (ext === 'dwg') return 'CAD 图纸已渲染，可直接用作参考图';
+  const pages = images.filter((image) => image.type === 'page').length;
+  const bitmaps = images.length - pages;
+  if (pages && bitmaps) return `PDF 图片 ${images.length} 张（${bitmaps} 内嵌 · ${pages} 页截图）`;
+  if (pages) return `PDF 页截图 ${pages} 张`;
+  return `PDF 内嵌图片 ${bitmaps} 张`;
+}
+
+function pdfImageHint(image, ext) {
+  if (ext === 'dwg') {
+    return `CAD 图纸 · ${image.width}×${image.height} · 点击用作参考图`;
+  }
+  return image.type === 'page'
+    ? `第 ${image.page} 页截图 · ${image.width}×${image.height} · 点击用作参考图`
+    : `第 ${image.page} 页内嵌图片 · ${image.width}×${image.height} · 点击用作参考图`;
+}
+
+function renderPdfImages(images, ext) {
+  if (!Array.isArray(images) || !images.length) return;
+  const strip = el('div', 'file-images');
+  strip.appendChild(el('span', 'file-images-label', pdfImageLabel(images, ext)));
+  images.forEach((image, index) => {
+    const button = el('button', 'file-thumb');
+    button.type = 'button';
+    button.title = pdfImageHint(image, ext);
+    const what =
+      ext === 'dwg'
+        ? 'CAD 图纸'
+        : image.type === 'page'
+          ? `第 ${image.page} 页截图`
+          : `第 ${image.page} 页内嵌图片`;
+    button.setAttribute('aria-label', `把${what}用作参考图`);
+    const img = el('img');
+    img.src = image.url;
+    img.alt = ext === 'dwg' ? 'CAD 图纸' : `PDF 第 ${image.page} 页图片 ${index + 1}`;
+    img.loading = 'lazy';
+    button.appendChild(img);
+    button.addEventListener('click', async () => {
+      const { addReference } = await import('./reference.js');
+      addReference({ id: image.id, url: image.url, role: '参考' });
+      toast('已加入参考图，说明要怎么改');
+    });
+    strip.appendChild(button);
+  });
+  els.attachmentSlot.appendChild(strip);
 }
 
 export async function uploadDocument(file) {
@@ -105,7 +160,7 @@ export async function uploadDocument(file) {
     return;
   }
   if (file.size > MAX_ATTACHMENT_BYTES) {
-    toast('文件不能超过 10MB');
+    toast('文件不能超过 50MB');
     return;
   }
   if (state.attachments.length >= MAX_ATTACHMENTS) {
@@ -116,7 +171,9 @@ export async function uploadDocument(file) {
     toast('这个文件已经添加');
     return;
   }
-  if (documentExt(file.name) === 'pdf') toast('正在读取 PDF 文字…');
+  const ext = documentExt(file.name);
+  if (ext === 'pdf') toast('正在读取 PDF 文字…');
+  if (ext === 'dwg') toast('正在渲染 CAD 图纸…');
   try {
     const res = await fetch('/api/upload/document', {
       method: 'POST',

@@ -25,7 +25,7 @@ export function normalizeDocumentName(name, ext) {
   return base.length > 120 ? `${base.slice(0, 117)}…` : base;
 }
 
-export async function saveDocument(userId, buffer, { name, ext, text, kind, chars }) {
+export async function saveDocument(userId, buffer, { name, ext, text, kind, chars, images }) {
   const dir = userDocumentDir(userId);
   await mkdir(dir, { recursive: true, mode: 0o700 });
   const id = newId();
@@ -37,6 +37,7 @@ export async function saveDocument(userId, buffer, { name, ext, text, kind, char
     kind,
     size: buffer.length,
     chars,
+    images: Array.isArray(images) ? images : [],
     createdAt: now(),
   };
   await writeFile(documentPath(userId, id, ext), buffer, { mode: 0o600 });
@@ -67,7 +68,13 @@ export async function findDocument(userId, id) {
     const st = await stat(documentPath(userId, id, meta.ext));
     if (!st.isFile()) return null;
     const text = await readFile(path.join(dir, `${id}.txt`), 'utf8');
-    return { ...meta, text };
+    // Documents uploaded before PDF image extraction existed have no images
+    // key at all; normalize so callers never have to null-check it.
+    return {
+      ...meta,
+      images: Array.isArray(meta.images) ? meta.images : [],
+      text,
+    };
   } catch {
     return null;
   }

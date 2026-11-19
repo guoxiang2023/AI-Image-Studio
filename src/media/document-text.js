@@ -20,6 +20,7 @@ export const DOCUMENT_EXTS = new Set([
   'xlsx',
   'pptx',
   'pdf',
+  'dwg',
 ]);
 
 const LEGACY_EXTS = new Set(['doc', 'xls', 'ppt']);
@@ -448,7 +449,16 @@ async function extractPdf(buffer) {
 
   const clean = tidyText(`${lines.join('\n')}${pageNote}`);
   if (!clean) {
-    throw new AppError(415, 'PDF 中没有可提取的文字；如果是扫描件，请先 OCR 后再上传');
+    // A pure image or scanned PDF still has value: its embedded bitmaps can be
+    // used as reference images. Only reject when there is nothing at all, which
+    // the upload route decides after image extraction.
+    return {
+      kind: 'PDF 文档',
+      text: '',
+      chars: 0,
+      truncated,
+      empty: true,
+    };
   }
   const total = clean.length;
   const clipped = total > DOCUMENT_MAX_CHARS;

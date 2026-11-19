@@ -47,6 +47,7 @@ export async function prepareChatTurn(user, body) {
         kind: document.kind,
         size: document.size,
         chars: document.chars,
+        images: Array.isArray(document.images) ? document.images : [],
         text: truncated
           ? `${document.text.slice(0, perDocument)}\n…（附件内容过长，已截断）`
           : document.text,

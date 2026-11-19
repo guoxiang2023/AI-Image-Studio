@@ -1251,6 +1251,27 @@ html[data-theme="light"] .ico-moon {
   text-overflow: ellipsis;
 }
 
+.user-file-thumb {
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel-3);
+  cursor: pointer;
+}
+
+.user-file-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.user-file-thumb:hover {
+  border-color: var(--accent);
+}
+
 .msg.assistant .avatar {
   width: 30px;
   height: 30px;
@@ -2071,6 +2092,41 @@ html[data-theme="light"] .ico-moon {
 
 .file-remove:hover {
   color: var(--danger);
+}
+
+.file-images {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.file-images-label {
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.file-thumb {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-3);
+  cursor: pointer;
+}
+
+.file-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.file-thumb:hover {
+  border-color: var(--accent);
 }
 
 .ref-chip {

@@ -223,6 +223,29 @@ function createUserMessage(message) {
       node.appendChild(el('span', 'user-file-ext', String(attachment.ext || '').toUpperCase()));
       node.appendChild(el('span', 'user-file-name', attachment.name || '附件'));
       files.appendChild(node);
+      const isCad = attachment.ext === 'dwg';
+      for (const image of Array.isArray(attachment.images) ? attachment.images : []) {
+        const thumb = el('button', 'user-file-thumb');
+        thumb.type = 'button';
+        const what = isCad
+          ? 'CAD 图纸'
+          : image.type === 'page'
+            ? `第 ${image.page} 页截图`
+            : `第 ${image.page} 页内嵌图片`;
+        thumb.title = `${what} · 点击用作参考图`;
+        thumb.setAttribute('aria-label', `把${what}用作参考图`);
+        const img = el('img');
+        img.src = image.url;
+        img.alt = isCad ? 'CAD 图纸' : `PDF 第 ${image.page} 页图片`;
+        img.loading = 'lazy';
+        thumb.appendChild(img);
+        thumb.addEventListener('click', async () => {
+          const { addReference } = await import('./reference.js');
+          addReference({ id: image.id, url: image.url, role: '参考' });
+          toast('已加入参考图，说明要怎么改');
+        });
+        files.appendChild(thumb);
+      }
     }
     bubble.appendChild(files);
   }
