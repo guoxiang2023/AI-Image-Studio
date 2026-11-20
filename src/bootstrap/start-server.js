@@ -8,6 +8,7 @@ import { createSecretBox, hashPassword, randomToken } from '../auth/crypto.js';
 import { DATA_DIR, HOST, PORT, USERS_DIR } from '../config.js';
 import { createApp } from '../http/create-app.js';
 import { setDummyPasswordHash, setSecretBox } from '../shared/runtime.js';
+import { shutdownOcr } from '../media/ocr.js';
 
 async function loadSecretKey(dataDir) {
   const fromEnv = process.env.SECRET_KEY;
@@ -69,6 +70,9 @@ export async function startServer({ host = HOST, port = PORT } = {}) {
       new Promise((resolve) => {
         server.close(() => resolve());
         server.closeAllConnections?.();
+        // The OCR helper is a child process and the tesseract worker a thread;
+        // neither is tied to the HTTP server's lifetime on its own.
+        void shutdownOcr().catch(() => {});
       }),
   };
 }

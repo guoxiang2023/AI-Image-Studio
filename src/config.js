@@ -36,6 +36,13 @@ export const DOCUMENT_MAX_CHARS = Math.max(
   1000,
   Number(process.env.DOCUMENT_MAX_CHARS || 120000),
 );
+// Scanned PDFs are recognized page by page. Vision handles a page in ~1 s once
+// warm, but a 200-page scan would still stall an upload for minutes, so only the
+// first pages are read and the rest stay available as reference images.
+export const OCR_PAGE_LIMIT = Math.max(
+  1,
+  Number(process.env.OCR_PAGE_LIMIT || 20),
+);
 export const DOCUMENT_MAX_IMAGES = Math.max(
   1,
   Number(process.env.DOCUMENT_MAX_IMAGES || 60),

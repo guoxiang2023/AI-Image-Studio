@@ -1,6 +1,12 @@
 import { unlink } from 'node:fs/promises';
 import path from 'node:path';
-import { DOCUMENT_MAX_BYTES, IMAGE_EXT_BY_TYPE, PDF_MAX_IMAGES } from '../../config.js';
+import {
+  DOCUMENT_MAX_BYTES,
+  DOCUMENT_MAX_CHARS,
+  IMAGE_EXT_BY_TYPE,
+  OCR_PAGE_LIMIT,
+  PDF_MAX_IMAGES,
+} from '../../config.js';
 import { json, readBody } from '../responses.js';
 import { saveImageBuffer, userImageDir } from '../../media/image-storage.js';
 import {
@@ -10,7 +16,8 @@ import {
   extractDocumentTextAsync,
   isSupportedDocumentExt,
 } from '../../media/document-text.js';
-import { extractPdfImages } from '../../media/pdf-images.js';
+import { extractPdfImages, rasterizePagesForOcr } from '../../media/pdf-images.js';
+import { recognizeText } from '../../media/ocr.js';
 import { isDwgBuffer, renderDwg } from '../../media/dwg-image.js';
 import { saveDocument } from '../../media/document-storage.js';
 import { AppError } from '../../shared/errors.js';
@@ -73,6 +80,10 @@ async function storePdfImages(userId, buffer) {
   } catch {
     return [];
   }
+  return saveFoundImages(userId, found);
+}
+
+async function saveFoundImages(userId, found) {
   const stored = [];
   try {
     for (const image of found) {
@@ -95,6 +106,61 @@ async function storePdfImages(userId, buffer) {
     return [];
   }
   return stored;
+}
+
+// A scanned PDF has no text layer at all, so the only way to read it is to draw
+// each page and run OCR. Pages are rendered before OCR so the same bitmaps can
+// also serve as reference images, which is what the upload did before OCR
+// existed: an unreadable scan still has to be usable as a picture.
+async function ocrScannedPdf(userId, buffer, { saveImages = true } = {}) {
+  let rendered;
+  try {
+    rendered = await rasterizePagesForOcr(buffer, { maxPages: OCR_PAGE_LIMIT });
+  } catch {
+    return { text: '', images: [] };
+  }
+  const images = saveImages
+    ? await saveFoundImages(
+        userId,
+        rendered.pages.map((page) => ({
+          page: page.page,
+          type: 'page',
+          width: page.width,
+          height: page.height,
+          buffer: page.buffer,
+        })),
+      )
+    : [];
+
+  const parts = [];
+  let collected = 0;
+  let backend = null;
+  for (const page of rendered.pages) {
+    if (collected > DOCUMENT_MAX_CHARS) break;
+    let text = '';
+    try {
+      const result = await recognizeText(page.buffer);
+      text = result.text;
+      if (text) backend = result.backend;
+    } catch {
+      // A single page failing OCR must not throw away the pages that worked.
+      continue;
+    }
+    if (!text) continue;
+    collected += text.length;
+    parts.push(
+      rendered.pages.length > 1 ? `## 第 ${page.page} 页\n${text}` : text,
+    );
+  }
+  const note =
+    rendered.totalPages > rendered.pages.length
+      ? `\n\n…（PDF 共 ${rendered.totalPages} 页，已识别前 ${rendered.pages.length} 页）`
+      : '';
+  return {
+    text: parts.length ? `${parts.join('\n\n')}${note}` : '',
+    images,
+    backend,
+  };
 }
 
 // The rendered sheet is the only picture a DWG yields, and it is derived from
@@ -161,16 +227,39 @@ export async function handleDocumentUpload(req, res, user) {
   }
 
   const parsed = await extractDocumentTextAsync(buffer, ext);
-  const images = ext === 'pdf' ? await storePdfImages(user.id, buffer) : [];
-  if (!parsed.text && !images.length) {
-    throw new AppError(415, 'PDF 中没有可提取的文字或图片；如果是扫描件，请先 OCR 后再上传');
+  let text = parsed.text;
+  let images = ext === 'pdf' ? await storePdfImages(user.id, buffer) : [];
+  let kind = parsed.kind;
+  let chars = parsed.chars;
+  let truncated = parsed.truncated;
+  let ocr = null;
+  // A PDF with no text layer is nearly always a scan. OCR it so the model gets
+  // readable text instead of only pictures; the pages stay usable as reference
+  // images either way.
+  if (ext === 'pdf' && !text.trim()) {
+    const scanned = await ocrScannedPdf(user.id, buffer, { saveImages: !images.length });
+    if (scanned.text) {
+      text = scanned.text;
+      kind = 'PDF 扫描件';
+      chars = scanned.text.length;
+      truncated = false;
+      ocr = scanned.backend;
+    }
+    if (!images.length) images = scanned.images;
   }
+  if (!text && !images.length) {
+    throw new AppError(415, 'PDF 中没有可提取的文字或图片，请确认扫描件没有损坏');
+  }
+  const rendered = images.filter((image) => image.type === 'page').length;
+  const placeholder = rendered
+    ? `（该 PDF 没有可提取的文字，已把 ${rendered} 页渲染成图片，可直接用作参考图）`
+    : `（该 PDF 没有可提取的文字，已提取 ${images.length} 张内嵌图片，可直接用作参考图）`;
   const document = await saveDocument(user.id, buffer, {
     name: name || `附件.${ext}`,
     ext,
-    text: parsed.text || `（该 PDF 没有可提取的文字，已提取 ${images.length} 张内嵌图片，可直接用作参考图）`,
-    kind: parsed.kind,
-    chars: parsed.chars,
+    text: text || placeholder,
+    kind,
+    chars,
     images,
   });
   return json(res, 200, {
@@ -180,7 +269,8 @@ export async function handleDocumentUpload(req, res, user) {
     kind: document.kind,
     size: document.size,
     chars: document.chars,
-    truncated: parsed.truncated,
+    truncated,
+    ocr,
     images,
   });
 }

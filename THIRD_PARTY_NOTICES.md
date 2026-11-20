@@ -13,6 +13,15 @@ Luma（`luma-image-agent`）在运行时分发以下第三方组件。所有组�
 | `pdfkit` | 0.20.x | MIT | 生成 PDF 文档 |
 | `qrcode-generator` | 2.x | MIT | 二维码生成 |
 | `dwgdxf` | 2.0.1 | MIT | DWG → DXF 转换（WASM） |
+| `tesseract.js` | 7.x | Apache-2.0 | 扫描件 OCR（Windows/Linux 及 Vision 不可用时） |
+| `tesseract.js-core` | 随 tesseract.js | Apache-2.0 | tesseract WASM 运行时 |
+| `@tesseract.js-data/chi_sim` | 1.0.0 | Apache-2.0 | 简体中文识别语料 |
+
+## OCR 说明
+
+- **macOS**：优先使用系统自带的 Vision 框架（`VNRecognizeTextRequest`），由 `desktop/ocr-helper.swift` 编译成 `build/ocr/ocr-helper-<arch>` 随应用分发。使用的是操作系统 API，不额外分发模型。
+- **Windows / Linux 及其他情况**：回退到随应用打包的 `tesseract.js`（WebAssembly），中文语料为 `chi_sim`。该路径完全离线，无需系统安装 tesseract。
+- 识别结果只写入本机用户数据目录，不发送到任何第三方服务。
 
 ## MPL-2.0 组件声明
 

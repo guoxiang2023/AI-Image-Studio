@@ -174,6 +174,82 @@ async function collectBitmaps(page, ops, pdfjs, budget) {
   return found;
 }
 
+// OCR needs the page as a lossless bitmap: `pageToReference` re-encodes to JPEG
+// for image models, which blurs small type. This renders a page (or a run of
+// pages) straight to PNG and hands each one to the OCR backend.
+export async function rasterizePagesForOcr(buffer, { maxPages = 20, scale = 1 } = {}) {
+  if (!buffer.subarray(0, 1024).toString('latin1').includes('%PDF-')) {
+    throw new AppError(400, '不是有效的 PDF 文件');
+  }
+  let pdfjs;
+  let canvasModule;
+  try {
+    pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    canvasModule = await import('@napi-rs/canvas');
+  } catch {
+    throw new AppError(500, 'PDF 解析组件不可用');
+  }
+  const canvasFactory = canvasFactoryFor(canvasModule);
+  const fontDir = standardFontDir();
+  const pages = [];
+  let pdf;
+  try {
+    pdf = await pdfjs.getDocument({
+      data: new Uint8Array(buffer),
+      useWorkerFetch: false,
+      isEvalSupported: false,
+      useSystemFonts: true,
+      disableFontFace: true,
+      canvasFactory,
+      ...(fontDir ? { standardFontDataUrl: fontDir } : {}),
+    }).promise;
+    const total = Math.min(pdf.numPages, maxPages);
+    for (let index = 1; index <= total; index += 1) {
+      const page = await pdf.getPage(index);
+      try {
+        const base = page.getViewport({ scale: 1 });
+        const longest = Math.max(base.width, base.height);
+        if (!longest) continue;
+        const viewport = page.getViewport({
+          scale: (PAGE_RENDER_EDGE * scale) / longest,
+        });
+        const width = Math.ceil(viewport.width);
+        const height = Math.ceil(viewport.height);
+        if (!width || !height) continue;
+        const holder = canvasFactory.create(width, height);
+        try {
+          await page.render({
+            canvasContext: holder.context,
+            viewport,
+            background: '#ffffff',
+          }).promise;
+          pages.push({ page: index, width, height, buffer: holder.canvas.toBuffer('image/png') });
+        } finally {
+          canvasFactory.destroy(holder);
+        }
+      } catch {
+        // One unreadable page must not lose the rest of the document.
+      } finally {
+        try {
+          page.cleanup();
+        } catch {
+          /* page may already be gone after a failed parse */
+        }
+      }
+    }
+    return { pages, totalPages: pdf.numPages };
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    throw new AppError(400, 'PDF 已加密或无法解析，请确认文件没有密码保护');
+  } finally {
+    try {
+      await pdf?.destroy?.();
+    } catch {
+      /* ignore cleanup errors */
+    }
+  }
+}
+
 async function rasterizePage(page, canvasFactory) {
   const base = page.getViewport({ scale: 1 });
   const longest = Math.max(base.width, base.height);

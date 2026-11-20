@@ -8,6 +8,7 @@ const {
 } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const { downloadDialogOptions } = require('./download-dialog.cjs');
 
 const APP_NAME = 'Luma';
 const APP_ID = 'com.luma.imagegen';
@@ -122,12 +123,14 @@ function createWindow() {
 function setupDownloads() {
   session.defaultSession.on('will-download', (event, item, webContents) => {
     const parent = BrowserWindow.fromWebContents(webContents) || mainWindow;
-    const defaultPath = path.join(app.getPath('downloads'), item.getFilename());
-    const savePath = dialog.showSaveDialogSync(parent, {
-      title: '保存图片',
-      defaultPath,
-      filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
-    });
+    const filename = item.getFilename();
+    const savePath = dialog.showSaveDialogSync(
+      parent,
+      downloadDialogOptions({
+        filename,
+        downloadsDir: app.getPath('downloads'),
+      }),
+    );
     if (!savePath) {
       event.preventDefault();
       return;

@@ -6,3 +6,6 @@
 .env
 *.log
 .DS_Store
+
+# Compiled OCR helper (built per-arch by desktop/build-ocr.cjs)
+/build/ocr/

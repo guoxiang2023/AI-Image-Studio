@@ -185,6 +185,9 @@ export async function uploadDocument(file) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || '上传失败');
+    // A scan has no text layer, so the server draws each page and recognizes it;
+    // say so, because the wait is much longer than a plain PDF upload.
+    if (data.ocr) toast(`扫描件已识别 ${data.chars || 0} 个字符`);
     addAttachment(data);
     els.input.focus();
   } catch (error) {
