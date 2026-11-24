@@ -27,5 +27,7 @@ export const state = {
   tagImage: null,
   summary: '',
   summaryUpto: 0,
+  workspace: null,
+  workspaceEnabled: false,
   toastTimer: null,
 };

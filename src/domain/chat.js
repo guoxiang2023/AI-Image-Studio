@@ -63,6 +63,7 @@ export function createChatDocument(userId) {
     messages: [],
     summary: '',
     summaryUpto: 0,
+    workspaceJson: '',
   };
 }
 
@@ -79,7 +80,19 @@ export function serializeChat(chat) {
     messagesJson: JSON.stringify(chat.messages),
     summary: chat.summary || '',
     summaryUpto: chat.summaryUpto || 0,
+    workspaceJson: chat.workspaceJson || '',
   };
+}
+
+function workspaceToClient(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed?.root) return null;
+    return { root: parsed.root, name: parsed.name || '' };
+  } catch {
+    return null;
+  }
 }
 
 function attachmentPromptBlocks(message) {
@@ -110,6 +123,7 @@ export function chatToClient(chat) {
     summary: chat.summary || '',
     summaryUpto: chat.summaryUpto || 0,
     archivedAt: chat.archivedAt || null,
+    workspace: workspaceToClient(chat.workspaceJson),
     messages: chat.messages
       .filter(
         (message) =>

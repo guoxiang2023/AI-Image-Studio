@@ -1,4 +1,7 @@
 let secretBox = null;
+// Set only by the Electron entry point. Reading a user's local directory is a
+// desktop capability; a networked deployment must never inherit it.
+let desktopWorkspace = false;
 let dummyPasswordHash = '';
 let desktopUpdater = null;
 
@@ -25,4 +28,12 @@ export function setDesktopUpdater(value) {
 
 export function getDesktopUpdater() {
   return desktopUpdater;
+}
+
+export function setDesktopWorkspace(value) {
+  desktopWorkspace = Boolean(value);
+}
+
+export function getDesktopWorkspace() {
+  return desktopWorkspace;
 }

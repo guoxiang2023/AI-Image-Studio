@@ -18,6 +18,7 @@ import {
   syncStreamingState,
 } from './stream.js';
 import { refreshGallery } from './gallery.js';
+import { syncWorkspaceForSession } from './workspace-panel.js';
 
 export async function send() {
   const running = activeStream();
@@ -88,10 +89,15 @@ export async function send() {
     if (event.type === 'session') {
       stream.sessionId = event.sessionId;
       if (sameView()) {
+        const adopted = state.sessionId !== event.sessionId;
         state.sessionId = event.sessionId;
         setSessionInUrl(event.sessionId);
         if (event.title) setTitle(event.title);
         markActiveSession();
+        // The chip belongs to a session. A turn that adopts a chat created by
+        // the server must not keep showing the binding of whatever the view held
+        // before it (usually none).
+        if (adopted) void syncWorkspaceForSession(event.sessionId);
       }
     } else if (event.type === 'status') {
       stream.status = event.text;
@@ -106,8 +112,15 @@ export async function send() {
         stream.content = '';
         if (sameView()) ensureStreamShell(stream)?.promoteTextToProcess();
       } else {
-        stream.content = '';
-        if (sameView()) ensureStreamShell(stream)?.resetText();
+        // A retry replaces the visible text with what was already committed.
+        // Clearing it outright made accepted paragraphs vanish from the screen
+        // while they were still part of the answer.
+        stream.content = typeof event.committed === 'string' ? event.committed : '';
+        if (sameView()) {
+          const shell = ensureStreamShell(stream);
+          shell?.resetText();
+          if (stream.content) shell?.appendText(stream.content);
+        }
       }
     } else if (event.type === 'image') {
       const image = {
@@ -130,7 +143,19 @@ export async function send() {
       if (sameView()) ensureStreamShell(stream)?.setText(event.text);
     } else if (event.type === 'document') {
       const document = event.document || {};
-      toast(`文档已生成：${document.title || '文档'}，可在「我的文档」查看`);
+      // A degraded deck is saved but not review-ready; the toast is the only
+      // place the user sees that difference at the moment it is created.
+      const warning =
+        document.degraded === 'salvaged'
+          ? '（页面策划被截断，仅保留完整页，属初稿）'
+          : document.degraded === 'fallback'
+            ? '（未能策划页面，已按原文机械分页，属初稿）'
+            : '';
+      toast(
+        warning
+          ? `文档已生成：${document.title || '文档'}${warning}`
+          : `文档已生成：${document.title || '文档'}，可在「我的文档」查看`,
+      );
     } else if (event.type === 'summary') {
       if (!sameView()) return;
       state.summary = event.summary || '';
@@ -150,8 +175,10 @@ export async function send() {
         ensureStreamShell(stream)?.setTime(stream.finishedAt);
       }
       if (sameView() && stream.sessionId) {
+        const adopted = state.sessionId !== stream.sessionId;
         state.sessionId = stream.sessionId;
         setSessionInUrl(stream.sessionId);
+        if (adopted) void syncWorkspaceForSession(stream.sessionId);
       }
     }
   };

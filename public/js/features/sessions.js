@@ -22,6 +22,7 @@ import { clearReference } from './reference.js';
 import { clearAttachments } from './attachments.js';
 import { closeSidebar } from './overlays.js';
 import { shouldReplayLiveStream } from './session-replay.js';
+import { renderWorkspace } from './workspace-panel.js';
 
 export function setSessionInUrl(id) {
   if (typeof history === 'undefined' || typeof location === 'undefined') return;
@@ -383,6 +384,8 @@ export function newChatView() {
   state.summaryUpto = 0;
   clearReference();
   clearAttachments();
+  state.workspace = null;
+  renderWorkspace();
   setTitle('新对话');
   renderMessages();
   markActiveSession();
@@ -413,6 +416,8 @@ export async function openSession(id) {
       : messages;
     state.summary = session.summary || '';
     state.summaryUpto = session.summaryUpto || 0;
+    state.workspace = session.workspace || null;
+    renderWorkspace();
     clearReference();
     clearAttachments();
     setTitle(session.title || '对话');

@@ -57,6 +57,8 @@ export const els = {
   modelPill: $('#modelPill'),
   providerMenu: $('#providerMenu'),
   compactBtn: $('#compactBtn'),
+  workspaceBtn: $('#workspaceBtn'),
+  workspaceBtnLabel: $('#workspaceBtnLabel'),
   themeBtn: $('#themeBtn'),
   themeBtnAuth: $('#themeBtnAuth'),
   topbarLabel: $('#topbarLabel'),

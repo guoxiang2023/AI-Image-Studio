@@ -3,6 +3,7 @@ const {
   BrowserWindow,
   Menu,
   dialog,
+  ipcMain,
   session,
   shell,
 } = require('electron');
@@ -44,12 +45,32 @@ if (!app.requestSingleInstanceLock()) {
 async function start() {
   configureEnvironment();
   const { startServer } = await import('../src/bootstrap/start-server.js');
-  const { setDesktopUpdater } = await import('../src/shared/runtime.js');
+  const { setDesktopUpdater, setDesktopWorkspace } = await import(
+    '../src/shared/runtime.js'
+  );
   runtime = await startServer({ host: '127.0.0.1', port: 0 });
+  // Binding a local directory is only reachable from the packaged/desktop app;
+  // a web deployment never gets this capability.
+  setDesktopWorkspace(true);
+  ipcMain.handle('luma:pick-directory', async () => {
+    const result = await dialog.showOpenDialog(
+      mainWindow || undefined,
+      {
+        title: '选择工作目录',
+        properties: ['openDirectory', 'createDirectory'],
+        buttonLabel: '绑定',
+      },
+    );
+    if (result.canceled || !result.filePaths.length) return null;
+    return result.filePaths[0];
+  });
   setDesktopUpdater(createUpdaterHooks());
   setupDownloads();
   installMenu();
   createWindow();
+  // Printed after the server is listening, so a launcher script can wait for
+  // real readiness instead of polling for a port it cannot know in advance.
+  console.log(`Luma desktop ready: http://127.0.0.1:${runtime.port}`);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -92,6 +113,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      preload: path.join(__dirname, 'preload.cjs'),
       devTools: true,
     },
   });

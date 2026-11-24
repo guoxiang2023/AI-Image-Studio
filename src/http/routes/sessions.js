@@ -2,8 +2,10 @@ import { json, readBody, readJsonBody } from '../responses.js';
 import {
   chatToClient,
   deleteUserChat,
+  discardUnusedSession,
   listSessions,
   loadChatForUser,
+  newChatForUser,
   renameUserChat,
   setUserChatArchived,
   updateSummary,
@@ -16,6 +18,27 @@ import {
   buildSessionExport,
   importSessionArchive,
 } from '../../services/session-transfer-service.js';
+
+// An empty session exists so a directory can be bound before the first message.
+export function handleCreateSession(req, res, user) {
+  return json(res, 201, chatToClient(newChatForUser(user.id)));
+}
+
+/**
+ * Deletes a session only if it is still an unused create-and-nothing-else row.
+ *
+ * Separate from `DELETE /api/sessions/:id` (which the user invokes on purpose)
+ * because this one is a cleanup after a failed bind: it must be a no-op for a
+ * row that a turn wrote into or that a binding actually reached. The guard is
+ * a single SQL statement, so it cannot be raced by a turn or a bind that lands
+ * between the client's check and this call.
+ */
+export function handleDiscardUnusedSession(req, res, user, sessionId) {
+  const chat = loadChatForUser(user.id, sessionId);
+  if (!chat) return json(res, 404, { error: '会话不存在' });
+  const removed = discardUnusedSession(user.id, chat.id);
+  return json(res, 200, { ok: true, removed });
+}
 
 export function handleListSessions(req, res, user) {
   const url = new URL(req.url, 'http://localhost');

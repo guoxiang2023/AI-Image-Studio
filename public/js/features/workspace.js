@@ -15,6 +15,7 @@ import { clearReference } from './reference.js';
 import { clearAttachments } from './attachments.js';
 import { checkForUpdates } from './updates.js';
 import { resetStudio } from './studio.js';
+import { clearWorkspaceView, loadWorkspaceStatus } from './workspace-panel.js';
 
 export async function enterApp(user) {
   state.user = user;
@@ -58,6 +59,7 @@ export async function initWorkspace() {
   showChatView();
   clearReference();
   clearAttachments();
+  clearWorkspaceView();
   setTitle('新对话');
   els.messages.innerHTML = '';
 
@@ -67,6 +69,7 @@ export async function initWorkspace() {
     toast(error.message);
   }
   renderModels();
+  await loadWorkspaceStatus();
 
   await refreshSessions();
   const requestedSession = new URLSearchParams(location.search).get('session');
@@ -104,6 +107,7 @@ export function resetWorkspace() {
   renderParams();
   clearReference();
   clearAttachments();
+  clearWorkspaceView();
   els.messages.innerHTML = '';
   if (els.documentsView) els.documentsView.hidden = true;
   if (els.documentModal) els.documentModal.hidden = true;

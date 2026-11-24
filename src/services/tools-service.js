@@ -27,6 +27,12 @@ import { normalizeQr, normalizeRefIds } from '../domain/chat-options.js';
 import { canUseReferenceImages } from '../domain/image-capabilities.js';
 import { referencePromptBlock } from '../domain/image-references.js';
 import { clamp, clipText, friendlyError } from '../shared/utils.js';
+import {
+  listWorkspaceFiles,
+  readWorkspaceFile,
+  searchWorkspace,
+  workspaceToolError,
+} from './workspace-service.js';
 
 async function optimizePrompt(ctx, draft, { aspectRatio, model, mode }) {
   if (!PROMPT_OPTIMIZE || !ctx.models?.llm?.apiKey) return draft;
@@ -423,9 +429,23 @@ async function createDocument(args, ctx) {
   }
 }
 
+async function workspaceTool(run, args, ctx) {
+  const missing = workspaceToolError(ctx);
+  if (missing) return missing;
+  try {
+    return { ok: true, ...(await run(ctx.workspace, args || {})) };
+  } catch (err) {
+    if (ctx.signal?.aborted) throw err;
+    return { error: friendlyError(err) };
+  }
+}
+
 export async function runTool(name, args, ctx) {
   if (name === 'generate_image') return generateImages(args, ctx);
   if (name === 'edit_image') return editImage(args, ctx);
   if (name === 'create_document') return createDocument(args, ctx);
+  if (name === 'list_workspace_files') return workspaceTool(listWorkspaceFiles, args, ctx);
+  if (name === 'read_workspace_file') return workspaceTool(readWorkspaceFile, args, ctx);
+  if (name === 'search_workspace') return workspaceTool(searchWorkspace, args, ctx);
   return { error: `未知工具 ${name}` };
 }

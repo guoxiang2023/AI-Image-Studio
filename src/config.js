@@ -36,6 +36,35 @@ export const DOCUMENT_MAX_CHARS = Math.max(
   1000,
   Number(process.env.DOCUMENT_MAX_CHARS || 120000),
 );
+// A bound workspace is read on demand, never pasted into the prompt. These caps
+// bound a single tool call so one read cannot blow the context budget.
+export const WORKSPACE_MAX_FILES = Math.max(
+  100,
+  Number(process.env.WORKSPACE_MAX_FILES || 4000),
+);
+export const WORKSPACE_MAX_DEPTH = Math.max(1, Number(process.env.WORKSPACE_MAX_DEPTH || 8));
+export const WORKSPACE_MAX_FILE_BYTES = Math.max(
+  4096,
+  Number(process.env.WORKSPACE_MAX_FILE_BYTES || 512 * 1024),
+);
+export const WORKSPACE_READ_LINES = Math.max(
+  20,
+  Number(process.env.WORKSPACE_READ_LINES || 400),
+);
+export const WORKSPACE_READ_CHARS = Math.max(
+  2000,
+  Number(process.env.WORKSPACE_READ_CHARS || 16000),
+);
+export const WORKSPACE_SEARCH_MATCHES = Math.max(
+  5,
+  Number(process.env.WORKSPACE_SEARCH_MATCHES || 60),
+);
+export const WORKSPACE_SEARCH_BYTES = Math.max(
+  1024 * 1024,
+  Number(process.env.WORKSPACE_SEARCH_BYTES || 24 * 1024 * 1024),
+);
+export const WORKSPACE_INDEX_TTL_MS =
+  Math.max(5, Number(process.env.WORKSPACE_INDEX_TTL_SECONDS || 60)) * 1000;
 // Scanned PDFs are recognized page by page. Vision handles a page in ~1 s once
 // warm, but a 200-page scan would still stall an upload for minutes, so only the
 // first pages are read and the rest stay available as reference images.

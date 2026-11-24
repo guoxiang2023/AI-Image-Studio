@@ -68,7 +68,8 @@ export function initDb(dataDir) {
       messages_json TEXT NOT NULL,
       summary TEXT NOT NULL DEFAULT '',
       summary_upto INTEGER NOT NULL DEFAULT 0,
-      archived_at INTEGER
+      archived_at INTEGER,
+      workspace_json TEXT NOT NULL DEFAULT ''
     );
     CREATE INDEX IF NOT EXISTS idx_chats_user_updated ON chats(user_id, updated_at DESC);
 
@@ -118,6 +119,9 @@ export function initDb(dataDir) {
   }
   if (!columns.has('archived_at')) {
     db.exec('ALTER TABLE chats ADD COLUMN archived_at INTEGER');
+  }
+  if (!columns.has('workspace_json')) {
+    db.exec("ALTER TABLE chats ADD COLUMN workspace_json TEXT NOT NULL DEFAULT ''");
   }
   if (columns.has('skill_id')) {
     db.exec('ALTER TABLE chats DROP COLUMN skill_id');

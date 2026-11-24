@@ -22,11 +22,13 @@ import {
   handleUpdateImage,
 } from './routes/gallery.js';
 import {
+  handleCompactSession,
+  handleCreateSession,
+  handleDiscardUnusedSession,
   handleExportSession,
   handleImportSession,
   handleListSessions,
   handleSession,
-  handleCompactSession,
 } from './routes/sessions.js';
 import {
   handleDocument,
@@ -46,6 +48,7 @@ import {
   handleUpdateStatus,
   handleVersion,
 } from './routes/version.js';
+import { handleWorkspace, handleWorkspaceStatus } from './routes/workspace.js';
 import { serveImageFile, serveStatic } from './static.js';
 
 function buildRouter() {
@@ -81,6 +84,7 @@ function buildRouter() {
   );
 
   router.get('/api/sessions', ({ req, res, user }) => handleListSessions(req, res, user));
+  router.post('/api/sessions', ({ req, res, user }) => handleCreateSession(req, res, user));
   router.post('/api/sessions/import', ({ req, res, user }) =>
     handleImportSession(req, res, user),
   );
@@ -95,6 +99,16 @@ function buildRouter() {
   );
   router.post('/api/sessions/:id/compact', ({ req, res, user, params }) =>
     handleCompactSession(req, res, user, params.id),
+  );
+  router.post('/api/sessions/:id/discard', ({ req, res, user, params }) =>
+    handleDiscardUnusedSession(req, res, user, params.id),
+  );
+  router.get('/api/workspace/status', ({ req, res }) => handleWorkspaceStatus(req, res));
+  router.put('/api/sessions/:id/workspace', ({ req, res, user, params }) =>
+    handleWorkspace(req, res, user, params.id),
+  );
+  router.delete('/api/sessions/:id/workspace', ({ req, res, user, params }) =>
+    handleWorkspace(req, res, user, params.id),
   );
   router.delete('/api/sessions/:id', ({ req, res, user, params }) =>
     handleSession(req, res, user, params.id),

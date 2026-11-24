@@ -6,10 +6,11 @@
 
 - 自然对话、流式回复与 Markdown 渲染
 - 对话支持上传 txt / Markdown / CSV / JSON / Word (.docx) / Excel (.xlsx) / PPT (.pptx) / PDF / CAD (.dwg) 文档；服务端提取文字后随消息进入上下文，可直接总结、分析或据此生成图片
+- 工作目录（桌面端）：在输入框上方绑定一个本地目录，Luma 按需用 list / read / search 工具读取，不必先把文件粘进来；只索引文本文件，跳过 .git、node_modules、构建产物与凭据文件，符号链接一律不跟随；目录属于单个会话，导出会话时不带走本地路径
 - 扫描件 PDF 会自动 OCR：没有文字层的 PDF 会逐页栅格化后识别，识别结果作为文档正文进入上下文并随消息使用；macOS 走系统 Vision 框架（快且中文准确），Windows/Linux 回退到内置 tesseract.js，完全离线
 - PDF 与 CAD 图纸可直接当参考图：PDF 内嵌位图会逐张提取，纯矢量页（CAD 平面图、CAD 导出的施工图）按页栅格化；DWG 按实体几何重绘为带标注的用地红线图，面积、周长与各边长度由真实坐标计算，并随消息附带实体与图层清单
 - 截图与图纸会保留真实尺度：DWG 头部的单位若与几何尺度矛盾（例如把 1.2 公顷的园区标成英寸），会按几何判定为米并在图与文本中注明，不静默改写
-- 在对话中让 Luma 把会话整理成可直接评审的 Word / PDF 终稿，生成后收进「我的文档」并可查看、下载；默认生成 Word，只有明确要求 PDF 时才生成 PDF；生成前先把长对话分块做结构化事实摘要并语义归并，再输出精简的“总—分—总”章节大纲；随后按章节独立取上下文、逐章生成；数据库字段/接口/部署等细节分章展开；策划/配图请求失败会自动降级为确定性大纲/候选图；同一主题只选最新一版配图；画册中移除的图片与编辑过程稿不会进入文档
+- 在对话中让 Luma 把会话整理成可直接评审的 Word / PDF / PPT 终稿，生成后收进「我的文档」并可查看、下载；默认生成 Word，明确要求 PDF 或 PPT 时才切换；PPT 走页级生成（一页一个观点，cover / section / bullets / image 四种版式），不沿用长文章节大纲，文本框按字号与字宽实测后自动缩字或精简，避免文字跑出页面；生成前先把长对话分块做结构化事实摘要并语义归并，再输出精简的“总—分—总”章节大纲；随后按章节独立取上下文、逐章生成；数据库字段/接口/部署等细节分章展开；策划/配图请求失败会自动降级为确定性大纲/候选图；同一主题只选最新一版配图；画册中移除的图片与编辑过程稿不会进入文档
 - 会话导出 / 导入：导出为 `.luma-session.zip`，包含消息、附件文字和图片；导入后创建新会话并自动更换图片 ID，不覆盖现有会话；单个文件上限 96MB
 - 流式回复中断或刷新页面后保留已生成的部分内容
 - 多轮图片生成与基于参考图的修改
@@ -35,20 +36,21 @@
 ```bash
 npm install
 
-# 后台启动 Web（默认）
-./start-web.sh start
+# 后台启动 Web（省略目标时默认 web）
+./start.sh start
+./start.sh web start
 
 # 查看状态 / 停止 / 重启
-./start-web.sh status
-./start-web.sh stop
-./start-web.sh restart
+./start.sh status
+./start.sh stop
+./start.sh restart
 
 # 查看日志
-./start-web.sh logs 100
-./start-web.sh logs -f
+./start.sh logs 100
+./start.sh logs -f
 
 # 前台运行，Ctrl+C 停止
-./start-web.sh run
+./start.sh run
 # http://127.0.0.1:8787
 ```
 
@@ -63,12 +65,22 @@ docker compose up -d --build
 ### 桌面端
 
 ```bash
-npm run desktop              # 开发运行
+./start.sh desktop start     # 后台启动，可直接点「工作目录」验证
+./start.sh desktop status    # 查看状态（含实际监听端口）
+./start.sh desktop stop      # 停止，连同 Electron helper 一起清理
+./start.sh desktop restart
+./start.sh desktop logs 100
+./start.sh desktop debug     # 带远程调试端口（9222）前台运行，用于自动化验证
+./start.sh desktop run       # 前台运行，Ctrl+C 停止
+
+npm run desktop              # 等价的开发命令
 npm run desktop:build:mac    # macOS x64 + arm64
 npm run desktop:build:win    # Windows x64
 ```
 
-桌面端数据保存在 Electron `userData` 目录，构建与签名说明见 [desktop/README.md](desktop/README.md)。
+桌面端数据保存在 Electron `userData` 目录，PID 与日志在 `.run/desktop.*`，构建与签名说明见 [desktop/README.md](desktop/README.md)。
+
+工作目录是桌面端专属能力：网页版与 Docker 部署不显示该按钮，服务端也会拒绝来自非本机或非桌面实例的绑定请求。
 
 ## 目录结构
 
@@ -135,6 +147,16 @@ npm test
 | `DOCUMENT_PDF_FONT_FAMILY` | 空 | 自定义 .ttc 字体集合中的 PostScript 名称，例如 `NotoSansCJKsc-Regular` |
 | `LLM_TIMEOUT_SECONDS` | `300` | 非流式对话请求总超时 |
 | `LLM_STREAM_IDLE_TIMEOUT_SECONDS` | `120` | 流式回复无数据时的空闲超时，收到新内容会重置 |
+| `CHAT_MAX_TOKENS` | `4096` | 单次对话请求的输出上限；超长回答会自动续写，所以这里限的是一次请求而不是整段回答 |
+| `CHAT_MAX_CONTINUATIONS` | `3` | 一轮回答最多自动续写几段，超过后停止并明确告知被截断 |
+| `WORKSPACE_MAX_FILES` | `4000` | 工作目录索引的文件数上限，超出后只覆盖一部分并注明 |
+| `WORKSPACE_MAX_DEPTH` | `8` | 工作目录扫描的最大层数 |
+| `WORKSPACE_MAX_FILE_BYTES` | `524288` | 单个可索引文本文件的大小上限（512KB），更大只统计不索引 |
+| `WORKSPACE_READ_LINES` | `400` | 一次 `read_workspace_file` 最多返回的行数 |
+| `WORKSPACE_READ_CHARS` | `16000` | 一次读取返回的字符上限，超出在行边界截断 |
+| `WORKSPACE_SEARCH_MATCHES` | `60` | 一次 `search_workspace` 最多返回的匹配条数 |
+| `WORKSPACE_SEARCH_BYTES` | `25165824` | 一次搜索最多扫描的合计字节数（24MB） |
+| `WORKSPACE_INDEX_TTL_SECONDS` | `60` | 工作目录索引缓存时间；过期后重新扫描，目录被删仍会立即报错 |
 | `UPDATE_REPO` | `guoxiang2023/AI-Image-Studio` | GitHub 仓库（`owner/repo`），用于检查 Release |
 | `UPDATE_TIMEOUT_SECONDS` | `8` | 检查更新请求超时 |
 | `UPDATE_CACHE_SECONDS` | `600` | 更新检查缓存时间 |

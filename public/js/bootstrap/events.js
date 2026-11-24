@@ -57,6 +57,7 @@ import {
   setUsageTab,
 } from '../features/usage.js';
 import { closeParams, renderParams, resetParams, toggleParams } from '../features/params.js';
+import { toggleWorkspace } from '../features/workspace-panel.js';
 import {
   clearActiveQr,
   clearPresetSelection,
@@ -118,6 +119,10 @@ export function bindEvents() {
   els.paramsBtn.addEventListener('click', (event) => {
     event.stopPropagation();
     toggleParams();
+  });
+  els.workspaceBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    void toggleWorkspace();
   });
 
   els.settingsBtn.addEventListener('click', openSettings);
