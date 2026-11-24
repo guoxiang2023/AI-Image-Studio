@@ -151,21 +151,29 @@ export function toLlmHistory(chat) {
   for (const message of all.slice(from)) {
     if (message.role === 'user') {
       let content = message.content || '';
-      if (Array.isArray(message.references) && message.references.length) {
+      const refs = Array.isArray(message.references) && message.references.length
+        ? message.references
+        : message.referenceImageId
+          ? [{ id: message.referenceImageId, role: '参考' }]
+          : [];
+      if (refs.length) {
         content +=
           '\n' +
-          message.references
+          refs
             .map(
               (ref, index) =>
                 `[参考图 ${index + 1}${ref.role && ref.role !== '参考' ? `（${ref.role}）` : ''} image_id=${ref.id}]`,
             )
             .join('\n');
-      } else if (message.referenceImageId) {
-        content += `\n[参考图 image_id=${message.referenceImageId}]`;
       }
       const attachmentBlock = attachmentPromptBlocks(message);
       if (attachmentBlock) content = content ? `${content}\n\n${attachmentBlock}` : attachmentBlock;
-      rows.push({ role: 'user', content });
+      const row = { role: 'user', content };
+      // The ids travel with the row so the async assembly step can attach the
+      // pixels. This function stays synchronous: the context trimmer runs over
+      // text, and reading image bytes here would make every caller async.
+      if (refs.length) row.imageIds = refs.map((ref) => ref.id);
+      rows.push(row);
     } else if (message.role === 'assistant') {
       const parts = [];
       if (message.content) parts.push(message.content);

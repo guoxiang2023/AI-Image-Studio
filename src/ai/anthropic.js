@@ -29,6 +29,38 @@ export function anthropicEndpoint(baseUrl, path) {
   return `${anthropicBaseUrl(baseUrl)}${path}`;
 }
 
+/**
+ * Normalizes a tool result into Anthropic's `tool_result.content`.
+ *
+ * A plain string stays a string. An array becomes the block list, with images
+ * converted to the same base64 source shape user messages use — anything else
+ * in the array is flattened to text, so an unexpected block cannot produce an
+ * invalid request body.
+ */
+function toolResultContent(content) {
+  if (!Array.isArray(content)) return textOf(content);
+  const blocks = [];
+  for (const part of content) {
+    if (typeof part === 'string') {
+      if (part) blocks.push({ type: 'text', text: part });
+      continue;
+    }
+    if (part?.type === 'text' && part.text) {
+      blocks.push({ type: 'text', text: part.text });
+      continue;
+    }
+    if (part?.type === 'image_url') {
+      const url = typeof part.image_url === 'string' ? part.image_url : part.image_url?.url;
+      const match = /^data:([^;,]+);base64,(.+)$/i.exec(String(url || ''));
+      if (match) {
+        blocks.push({ type: 'image', source: { type: 'base64', media_type: match[1], data: match[2] } });
+        continue;
+      }
+    }
+  }
+  return blocks.length ? blocks : textOf(content);
+}
+
 function textOf(content) {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
@@ -121,7 +153,10 @@ export function toAnthropicMessages(messages = []) {
       const block = {
         type: 'tool_result',
         tool_use_id: message.tool_call_id || '',
-        content: textOf(message.content),
+        // A tool result may carry image blocks (a generated picture the model
+        // should look at). textOf() drops them, which left the model unable to
+        // inspect its own output; the block form keeps both text and pixels.
+        content: toolResultContent(message.content),
       };
       const last = output[output.length - 1];
       if (

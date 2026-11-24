@@ -11,11 +11,21 @@ export function clamp(n, min, max) {
   return Math.min(max, Math.max(min, n));
 }
 
+/**
+ * Parses a tool call's arguments.
+ *
+ * Returns `null` when the payload is not usable JSON. That distinction matters:
+ * a call cut off by the output limit arrives as a truncated string, and
+ * silently returning `{}` let a truncated `create_document({"format":"pptx"…`
+ * run with no arguments at all — producing a Word file for a request that
+ * asked for a deck. Callers must decide what an unparseable call means.
+ */
 export function parseArgs(raw) {
   try {
-    return JSON.parse(raw || '{}');
+    const parsed = JSON.parse(raw || '{}');
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
   } catch {
-    return {};
+    return null;
   }
 }
 
@@ -47,6 +57,13 @@ export function networkError(cause) {
 export function friendlyError(err) {
   if (isAbort(err)) return '已取消';
   if (err?.name === 'TimeoutError') return '请求超时，请重试';
+  // A retry wrapper replaces the message with a generic network hint, which
+  // hides a provider error such as 500 or 401 behind "check your network".
+  // When the underlying cause carries a real message, report that instead.
+  const cause = err?.cause;
+  if (cause instanceof Error && cause.message && cause.message !== err.message) {
+    return cause.message;
+  }
   return err?.message || '未知错误';
 }
 

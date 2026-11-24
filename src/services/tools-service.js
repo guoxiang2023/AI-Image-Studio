@@ -161,7 +161,9 @@ async function saveImageResults(
       ...meta,
     };
     saved.push(record);
-    ctx.turnImages.push(record);
+    // The turn owns this array; a caller that omits it must not crash a tool
+    // mid-flight with "undefined.push", which reads as a bug to the user.
+    if (Array.isArray(ctx.turnImages)) ctx.turnImages.push(record);
     ctx.emit({ type: 'image', ...record });
   }
   return saved;

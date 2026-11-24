@@ -38,6 +38,23 @@ export async function findImageFile(userId, id) {
   return null;
 }
 
+/**
+ * Reads a stored image as a base64 data URI, for handing pixels to a chat model.
+ *
+ * A `data:` URI is required rather than the `/files/<id>.png` path: that path
+ * only means something to this server, so a provider would fetch nothing.
+ * SVG is refused — the chat endpoints accept bitmaps, and silently sending
+ * something they reject would look like an empty image.
+ */
+export async function imageDataUrl(userId, id, { maxBytes = 8 * 1024 * 1024 } = {}) {
+  const file = await findImageFile(userId, id);
+  if (!file || file.ext === 'svg') return null;
+  const st = await stat(file.path).catch(() => null);
+  if (!st?.isFile() || st.size > maxBytes) return null;
+  const buffer = await readFile(file.path);
+  return `data:${file.mime};base64,${buffer.toString('base64')}`;
+}
+
 export async function itemToBuffer(item, signal) {
   if (item?.b64_json) return Buffer.from(item.b64_json, 'base64');
   if (item?.url) {

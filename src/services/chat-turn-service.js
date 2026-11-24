@@ -19,6 +19,7 @@ import {
 } from './chat-service.js';
 import { loadSettings } from './model-settings-service.js';
 import { maybeCompressChat } from './summary-service.js';
+import { workspaceFromChat } from './workspace-service.js';
 
 export async function prepareChatTurn(user, body) {
   const message = String(body.message || '').trim();
@@ -61,16 +62,6 @@ export async function prepareChatTurn(user, body) {
     throw new AppError(400, '请先在「模型设置」中配置对话模型 API Key');
   }
 
-  let chat = body.sessionId ? loadChatForUser(user.id, body.sessionId) : null;
-  const isNew = !chat;
-  if (!chat) chat = newChatForUser(user.id);
-  if (!chat.title) {
-    chat.title =
-      clipText(message, 30) ||
-      clipText(attachments[0]?.name || '', 30) ||
-      (refIds.length ? '图片对话' : '附件对话');
-  }
-
   const refRoles = normalizeRefRoles(body.referenceRoles, refIds.length);
   const options = normalizeChatOptions(body.options);
   options.qr = normalizeQr(body.qr);
@@ -83,6 +74,23 @@ export async function prepareChatTurn(user, body) {
     references.push({ id, url: `/files/${id}.${file.ext}`, role: refRoles[index] || '参考' });
   }
 
+  // The chat is loaded or created LAST, with no await after it.
+  //
+  // Creating it earlier inserted the row before the reference lookups finished,
+  // so its id was already listed by /api/sessions while this turn still had I/O
+  // to do. A second tab could then load that chat, run a complete turn, and this
+  // caller would go on to save its stale empty snapshot over it. Everything
+  // awaits first; the row appears only when the caller is about to claim it.
+  let chat = body.sessionId ? loadChatForUser(user.id, body.sessionId) : null;
+  const isNew = !chat;
+  if (!chat) chat = newChatForUser(user.id);
+  if (!chat.title) {
+    chat.title =
+      clipText(message, 30) ||
+      clipText(attachments[0]?.name || '', 30) ||
+      (refIds.length ? '图片对话' : '附件对话');
+  }
+
   return {
     message,
     models,
@@ -91,12 +99,18 @@ export async function prepareChatTurn(user, body) {
     references,
     attachments,
     options,
+    workspace: workspaceFromChat(chat),
     turnId: newId(),
   };
 }
 
 export async function runPreparedTurn({ user, prepared, emit, signal }) {
   const { message, models, chat, isNew, references, attachments, options, turnId } = prepared;
+  // Resolved at execution time through the single capability gate. The turn is
+  // prepared and run in the same process, but re-deriving here keeps the row
+  // from acting as authority: a binding made by a desktop session is ignored by
+  // a web/Docker deployment that shares the same DATA_DIR.
+  const workspace = workspaceFromChat(chat);
   const startedAt = Date.now();
   const elapsedMs = () => Math.max(0, Date.now() - startedAt);
 
@@ -142,11 +156,19 @@ export async function runPreparedTurn({ user, prepared, emit, signal }) {
         draft.content += event.text;
         saveDraft();
       } else if (event.type === 'reset') {
-        const kept = event.keep ? draft.content.trim() : '';
-        if (kept) {
-          draft.process = draft.process ? `${draft.process}\n\n${kept}` : kept;
+        if (event.keep) {
+          // Analysis shown before a tool call becomes process, not the answer.
+          const kept = draft.content.trim();
+          if (kept) {
+            draft.process = draft.process ? `${draft.process}\n\n${kept}` : kept;
+          }
+          draft.content = '';
+        } else {
+          // A retry re-streams only the current attempt. Text already accepted
+          // from earlier segments must survive the reset, otherwise an abort
+          // or a failed retry finalises an empty draft and deletes it.
+          draft.content = String(event.committed || '');
         }
-        draft.content = '';
         saveDraft(true);
       } else if (event.type === 'image') {
         const image = { ...event };
@@ -184,6 +206,7 @@ export async function runPreparedTurn({ user, prepared, emit, signal }) {
       refIds: references.map((ref) => ref.id),
       references,
       options,
+      workspace,
       turnId,
       countBudget: options.count || null,
       userText: message,
@@ -224,7 +247,11 @@ export async function runPreparedTurn({ user, prepared, emit, signal }) {
         removeDraft();
       }
     }
-    if (!signal.aborted) {
+    // Guarded: every real caller passes an AbortSignal, but a missing one used
+    // to throw inside this catch block — turning a reportable turn failure into
+    // an unhandled rejection that swallowed both the error and the `done` event.
+    const aborted = signal?.aborted === true;
+    if (!aborted) {
       emit({ type: 'error', message: friendlyError(err) });
     }
     try {
@@ -236,7 +263,7 @@ export async function runPreparedTurn({ user, prepared, emit, signal }) {
       type: 'done',
       sessionId: chat.id,
       created: isNew,
-      aborted: signal.aborted,
+      aborted,
       durationMs,
       ts: finishedAt,
     });

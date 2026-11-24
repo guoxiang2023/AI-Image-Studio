@@ -126,6 +126,19 @@ export const DOC_ATTACHMENT_TOTAL = Math.max(
   Number(process.env.DOC_ATTACHMENT_TOTAL || 36000),
 );
 export const LLM_TIMEOUT = Math.max(10, Number(process.env.LLM_TIMEOUT_SECONDS || 300));
+// Per-request output ceiling for a chat turn. A long answer is continued
+// automatically when the model hits it, so this bounds one request rather than
+// the whole answer.
+export const CHAT_MAX_TOKENS = Math.max(
+  512,
+  Number(process.env.CHAT_MAX_TOKENS || 4096),
+);
+// How many continuations one turn may use before it stops and reports the cut.
+export const CHAT_MAX_CONTINUATIONS = Math.max(
+  0,
+  Number(process.env.CHAT_MAX_CONTINUATIONS || 3),
+);
+
 export const LLM_STREAM_IDLE_TIMEOUT = Math.max(
   10,
   Number(process.env.LLM_STREAM_IDLE_TIMEOUT_SECONDS || 120),
