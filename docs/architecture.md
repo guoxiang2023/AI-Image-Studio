@@ -44,17 +44,20 @@ src/
     routes/                       # 只做 HTTP 适配
       marketing.js                # 运营物料模板/预览/生成
       documents.js                # 我的文档列表/预览/下载/删除
+      workspace.js                # 工作目录状态、绑定与解绑（桌面端）
   auth/
     crypto.js                     # scrypt、Token、SecretBox
     session-service.js            # Session 签发、Cookie、当前用户
   services/
     auth-service.js               # 注册、登录、限流
-    chat-service.js               # 会话持久化
+    chat-service.js               # 会话持久化；侧栏列表隐藏空且未绑定的会话
     chat-turn-service.js          # 一轮对话的完整用例
-    agent-service.js              # LLM 工具调用循环
-    tools-service.js              # generate_image / edit_image
+    turn-lock.js                  # 同一会话同时只允许一轮生成
+    agent-service.js              # LLM 工具调用循环、续写与图片回看
+    tools-service.js              # generate_image / edit_image / create_document / workspace 工具
+    document-service.js           # 会话整理为 Word/PDF/PPT；PPT 走独立页级分支
+    workspace-service.js          # 会话绑定的工作目录：扫描、索引、受限读取
     summary-service.js            # 会话摘要压缩
-    document-service.js           # 会话整理为 Word/PDF 内容并嵌入图片
     document-library-service.js   # 生成文档的落盘、列表、预览和删除
     session-transfer-service.js   # 会话 ZIP 导出、校验、导入与图片 ID 重映射
     model-settings-service.js     # 模型配置读取/加密/脱敏
@@ -66,6 +69,8 @@ src/
     database.js                   # 连接、Schema、迁移、回填
     repositories/                 # 按聚合拆分的 SQL
   domain/
+    workspace.js                  # 工作目录的忽略规则、凭据文件、相对路径校验
+    pptx.js                       # 页级大纲 prompt、解析与确定性降级分页
     chat.js                       # 会话文档、LLM 历史、客户端视图
     document.js                   # 文档主题提示词、Markdown 解析、图片补齐
     chat-options.js               # 画幅/数量/参考图/标签校验
@@ -86,6 +91,8 @@ src/
     dwg-image.js                  # DWG→DXF→SVG→PNG，CAD 图纸渲染为参考图
     docx.js                       # WordprocessingML 与图片嵌入
     pdf.js                        # A4 PDF 排版、中文字体与图片嵌入
+    pptx.js                       # PPTX 版式、字号实测缩字与图片嵌入
+    slide-renderer.js             # PPT 视觉稿：逐页交给图片模型绘制并校验文字
     zip-reader.js                 # OpenXML 压缩包的最小 ZIP 读取器
     zip-writer.js                 # 生成 DOCX 的最小 ZIP 写入器
     png.js                        # PNG 编码/解码/比例填充
