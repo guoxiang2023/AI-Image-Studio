@@ -11,7 +11,9 @@ function formatSize(bytes) {
 }
 
 function formatLabel(format) {
-  return format === 'docx' ? 'Word 文档' : 'PDF 文档';
+  if (format === 'docx') return 'Word 文档';
+  if (format === 'pptx') return 'PPT 演示文稿';
+  return 'PDF 文档';
 }
 
 function documentMeta(doc) {
@@ -29,7 +31,7 @@ function createDocumentCard(doc) {
   const card = el('article', 'document-card');
   const head = el('div', 'document-card-head');
   head.appendChild(
-    el('span', `document-format ${doc.format}`, doc.format === 'pdf' ? 'PDF' : 'DOCX'),
+    el('span', `document-format ${doc.format}`, String(doc.format || 'docx').toUpperCase()),
   );
   const info = el('div', 'document-card-info');
   info.appendChild(el('h3', 'document-card-title', doc.title || '文档'));
@@ -101,8 +103,37 @@ function previewHeading(level, text) {
   return el(tag, 'document-preview-heading', text || '');
 }
 
+// A deck's preview is a page list, not a block stream: each entry is one slide
+// with its layout, title and bullets.
+function slidePreview(slide, index) {
+  const card = el('div', 'document-preview-slide');
+  const meta = el('div', 'document-preview-slide-meta');
+  meta.appendChild(el('span', 'document-preview-slide-no', String(index + 1)));
+  const label =
+    slide.layout === 'cover'
+      ? '封面'
+      : slide.layout === 'section'
+        ? '章节'
+        : slide.layout === 'image'
+          ? '图文'
+          : '要点';
+  meta.appendChild(el('span', 'document-preview-slide-layout', label));
+  card.appendChild(meta);
+  if (slide.title) card.appendChild(el('h4', 'document-preview-slide-title', slide.title));
+  for (const item of slide.bullets || []) {
+    card.appendChild(el('p', 'document-preview-slide-bullet', `• ${item}`));
+  }
+  return card;
+}
+
 function renderPreview(blocks) {
   els.documentModalBody.replaceChildren();
+  if (Array.isArray(blocks) && blocks.length && blocks[0]?.layout) {
+    blocks.forEach((slide, index) => {
+      els.documentModalBody.appendChild(slidePreview(slide, index));
+    });
+    return;
+  }
   for (const block of blocks || []) {
     if (block.type === 'heading') {
       els.documentModalBody.appendChild(previewHeading(block.level, block.text));

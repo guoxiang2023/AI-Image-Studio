@@ -2582,6 +2582,61 @@ html[data-theme="light"] .ico-moon {
   background: var(--accent-soft);
 }
 
+.document-preview-slide {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+}
+
+.document-preview-slide + .document-preview-slide {
+  margin-top: 10px;
+}
+
+.document-preview-slide-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--faint);
+}
+
+.document-preview-slide-no {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.document-preview-slide-layout {
+  letter-spacing: 0.06em;
+}
+
+.document-preview-slide-title {
+  margin: 0 0 8px;
+  font-size: 15px;
+  color: var(--fg);
+}
+
+.document-preview-slide-bullet {
+  margin: 0 0 4px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.document-format.pptx {
+  color: #d97706;
+  border-color: color-mix(in srgb, #d97706 38%, var(--border));
+  background: color-mix(in srgb, #d97706 10%, transparent);
+}
+
 .document-card-info {
   min-width: 0;
 }
@@ -4276,6 +4331,17 @@ h5.document-preview-heading {
 
 .compact-chip {
   margin-left: auto;
+}
+
+/* The bound folder name can be long; the chip keeps one line and ellipsizes. */
+#workspaceBtn {
+  max-width: 220px;
+}
+
+#workspaceBtnLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tool-chip:disabled {

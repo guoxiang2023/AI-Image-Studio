@@ -604,9 +604,11 @@ test('renders a PDF with selectable text and an embedded image', async (t) => {
 test('exposes document generation as an agent tool', () => {
   const tool = TOOLS.find((entry) => entry.function?.name === 'create_document');
   assert.ok(tool);
-  assert.deepEqual(tool.function.parameters.properties.format.enum, ['pdf', 'docx']);
+  assert.deepEqual(tool.function.parameters.properties.format.enum, ['pdf', 'docx', 'pptx']);
   assert.match(tool.function.description, /默认生成 Word/);
+  assert.match(tool.function.description, /pptx/);
   assert.match(tool.function.parameters.properties.format.description, /默认 docx/);
+  assert.match(tool.function.parameters.properties.format.description, /pptx/);
   assert.match(SYSTEM_PROMPT, /create_document/);
   assert.match(SYSTEM_PROMPT, /默认生成 Word/);
   assert.match(SYSTEM_PROMPT, /我的文档/);

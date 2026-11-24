@@ -380,15 +380,25 @@ async function editImage(args, ctx) {
 
 
 async function createDocument(args, ctx) {
-  const format = String(args?.format || '').toLowerCase() === 'pdf' ? 'pdf' : 'docx';
+  const requested = String(args?.format || '').toLowerCase();
+  const format = ['pdf', 'pptx'].includes(requested) ? requested : 'docx';
+  // Visual mode only exists for decks; a Word file has no page to draw.
+  const visual = format === 'pptx' && args?.visual === true;
+  const statusText =
+    format === 'pdf'
+      ? '正在分析素材并撰写 PDF 终稿…'
+      : visual
+        ? '正在策划页面，之后逐页绘制…'
+        : format === 'pptx'
+          ? '正在策划页面并生成 PPT…'
+          : '正在分析素材并撰写 Word 终稿…';
   try {
-    ctx.emit({
-      type: 'status',
-      text: format === 'pdf' ? '正在分析素材并撰写 PDF 终稿…' : '正在分析素材并撰写 Word 终稿…',
-    });
+    ctx.emit({ type: 'status', text: statusText });
     const result = await generateSessionDocument(ctx.user, ctx.chat.id, {
       signal: ctx.signal,
       format,
+      visual,
+      emit: ctx.emit,
     });
     const document = await saveGeneratedDocument({
       userId: ctx.user.id,
@@ -401,6 +411,16 @@ async function createDocument(args, ctx) {
       preview: result.preview,
     });
     ctx.createdDocuments = (ctx.createdDocuments || 0) + 1;
+    // A deck whose planning failed or was cut off is still saved and still
+    // downloadable, but it is not a review-ready 终稿: say so at the moment the
+    // file appears rather than leaving the difference in the server log.
+    const degraded = format === 'pptx' && result.planStatus && result.planStatus !== 'model';
+    // A visual deck where some pages fell back to text is not uniformly
+    // designed; say which pages so the user is not surprised at the file.
+    const partialVisual =
+      visual && result.unrenderedPages && result.unrenderedPages.length
+        ? result.unrenderedPages
+        : null;
     ctx.emit({
       type: 'document',
       document: {
@@ -410,6 +430,8 @@ async function createDocument(args, ctx) {
         size: document.size,
         imageCount: document.imageCount,
         createdAt: document.createdAt,
+        ...(degraded ? { degraded: result.planStatus } : {}),
+        ...(partialVisual ? { textPages: partialVisual } : {}),
       },
     });
     return {
@@ -420,8 +442,18 @@ async function createDocument(args, ctx) {
         format: document.format,
         size: document.size,
         image_count: document.imageCount,
+        ...(result.slideCount ? { slide_count: result.slideCount } : {}),
       },
-      note: '文档已生成，用户可在「我的文档」中查看和下载。',
+      note: degraded
+        ? `文档已生成并保存，但页面策划${result.planStatus === 'salvaged' ? '被截断，只保留了写完整的页面' : '失败，已退回按原文机械分页'}。这是初稿，需要重新整理后再交付。请如实告诉用户这一点，不要让用户以为这是可直接评审的终稿。`
+        : partialVisual
+          ? `视觉稿已生成并保存。其中第 ${partialVisual.join('、')} 页未能绘制，这几页保留了可编辑的文字版式，其余页为图片。请如实告诉用户哪几页是文字版。`
+          : visual
+            ? '视觉稿已生成，每页都是图片，用户可在「我的文档」中查看和下载。可以提醒用户：图片页的文字不可直接编辑，需要改字时用可编辑版本重出。'
+            : '文档已生成，用户可在「我的文档」中查看和下载。',
+      ...(degraded ? { degraded: result.planStatus } : {}),
+      ...(visual ? { visual: true } : {}),
+      ...(partialVisual ? { textPages: partialVisual } : {}),
     };
   } catch (err) {
     if (ctx.signal?.aborted) throw err;

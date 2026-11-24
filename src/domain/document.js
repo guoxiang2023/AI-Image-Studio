@@ -164,7 +164,7 @@ export function buildTranscript(chat, maxChars = 40000) {
     .join('\n\n');
 }
 
-function formatImageCatalog(images) {
+export function formatImageCatalog(images) {
   if (!images.length) return '（没有可进入终稿的图片，final_images 必须为空数组。）';
   return images
     .map((image) => {

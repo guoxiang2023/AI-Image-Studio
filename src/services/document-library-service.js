@@ -37,7 +37,7 @@ export async function saveGeneratedDocument({
 }) {
   const id = newId();
   const createdAt = now();
-  const safeFormat = format === 'docx' ? 'docx' : 'pdf';
+  const safeFormat = ['docx', 'pdf', 'pptx'].includes(format) ? format : 'pdf';
   await saveGeneratedDocumentFile(userId, id, safeFormat, buffer);
   const document = {
     id,

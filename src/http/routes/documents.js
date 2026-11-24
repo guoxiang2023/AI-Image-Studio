@@ -8,9 +8,15 @@ import {
   userDocumentPath,
 } from '../../services/document-library-service.js';
 
+const FORMAT_MIME = {
+  pdf: 'application/pdf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+};
+
 function contentDisposition(filename, format, inline) {
-  const fallback =
-    format === 'pdf' ? 'document.pdf' : 'document.docx';
+  const ext = FORMAT_MIME[format] ? format : 'docx';
+  const fallback = `document.${ext}`;
   const encoded = encodeURIComponent(filename).replace(
     /['()*]/g,
     (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
@@ -24,6 +30,7 @@ async function serveDocumentFile(res, user, id, { inline = false } = {}) {
   if (inline && document.format !== 'pdf') {
     return json(res, 415, { error: '只有 PDF 可以在浏览器中打开' });
   }
+  const mime = FORMAT_MIME[document.format] || FORMAT_MIME.docx;
   const filePath = userDocumentPath(user.id, document);
   let fileStat;
   try {
@@ -33,10 +40,7 @@ async function serveDocumentFile(res, user, id, { inline = false } = {}) {
     return json(res, 404, { error: '文档文件已失效' });
   }
   res.writeHead(200, {
-    'Content-Type':
-      document.format === 'pdf'
-        ? 'application/pdf'
-        : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'Content-Type': mime,
     'Content-Length': fileStat.size,
     'Content-Disposition': contentDisposition(
       document.filename,
