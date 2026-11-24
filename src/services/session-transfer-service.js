@@ -66,6 +66,8 @@ export async function buildSessionExport(user, sessionId) {
   if (!Array.isArray(chat.messages) || !chat.messages.length) {
     throw new AppError(400, '会话还没有内容，无法导出');
   }
+  // The bound directory is a machine-local path. It is deliberately not part of
+  // the archive: importing it elsewhere would point at a stranger's filesystem.
 
   const imageIds = collectImageIds(chat);
   if (imageIds.size > MAX_IMAGES) {
