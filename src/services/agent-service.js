@@ -240,8 +240,26 @@ export async function runAgent(ctx) {
   const continuePrompt =
     '上一条回复因为长度限制被截断了。请从断掉的地方继续，直接接着写，不要重复已经输出的内容，也不要重新开头或加任何说明。';
 
+  // The tool budget ran out and the tool-less round still produced no prose.
+  // Nothing the tools gathered is persisted — chat history is rebuilt from text
+  // only — so ending here loses the whole turn's work and no later "continue"
+  // can recover it. One more tools-off attempt re-sends the same in-memory
+  // observations, which is the only place those results exist.
+  let synthesisTried = false;
+
   while (toolSteps < maxToolSteps) {
     const lastToolStep = toolSteps >= maxToolSteps - 1;
+    if (lastToolStep) {
+      // The last round cannot call another tool, so it must produce the answer.
+      // Saying so is not decoration: a model that has spent every previous round
+      // in "act" mode will otherwise emit an empty turn, and the turn then ends
+      // on the generic apology even though it did plenty of work.
+      messages.push({
+        role: 'user',
+        content:
+          '工具调用次数已用完。请不要再调用任何工具，直接基于上面已有的工具结果写出最终回答。如果结果不足以覆盖全部问题，就在回答里说明哪些部分还需要更多信息。',
+      });
+    }
     ctx.emit({ type: 'status', text: toolSteps === 0 ? '理解需求…' : '整理结果…' });
     let streamed = '';
     let response;
@@ -303,7 +321,13 @@ export async function runAgent(ctx) {
     // parked copy must not be appended a second time.
     discarded = '';
 
-    const calls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+    const rawCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+    // The final round is sent without tools, yet a model that has spent the
+    // whole turn calling them can still answer with an in-band call. The agent
+    // loop cannot dispatch it — no round is left — so taking that path ended the
+    // turn with an empty answer and the generic apology. On that round the text
+    // is the answer, and a call the provider volunteered there has no work to do.
+    const calls = lastToolStep ? [] : rawCalls;
     recordLlmUsage({
       userId: ctx.user?.id,
       chatId: ctx.chat?.id,
@@ -315,7 +339,7 @@ export async function runAgent(ctx) {
       usage: response.usage,
       messages,
       completionText: message.content,
-      toolCalls: calls,
+      toolCalls: rawCalls,
       requestCount: 1,
     });
     if (calls.length) {
@@ -456,12 +480,70 @@ export async function runAgent(ctx) {
         : '模型再次输出相同内容，自动续写已停止';
     text = `${text}\n\n（内容较长，${reason}；如需更多请回复「继续」。）`;
   }
+  if (!text && toolSteps > 0 && !synthesisTried) {
+    // The loop spent its budget on tools and never wrote the answer. Everything
+    // those tools returned exists only in `messages`, which dies with this call,
+    // so a later "continue" would start from nothing. Ask once more, with the
+    // observations still in hand.
+    synthesisTried = true;
+    messages.push({
+      role: 'user',
+      content:
+        '现在直接写最终回答。只依据上面已经拿到的工具结果，不要调用工具，也不要再重新检索；结果不足以回答的部分就直说。',
+    });
+    ctx.emit({ type: 'status', text: '正在整理最终回答…' });
+    try {
+      const retry = await streamChatCompletion(
+        { ...ctx.models.llm, thinkingDisabled: true },
+        messages,
+        {
+          signal: ctx.signal,
+          tools: false,
+          maxTokens: CHAT_MAX_TOKENS,
+          onDelta: (delta) => {
+            text += delta;
+            ctx.emit({ type: 'delta', text: delta });
+          },
+          onReset: () => {
+            text = '';
+            ctx.emit({ type: 'reset', committed: '' });
+          },
+        },
+      );
+      recordLlmUsage({
+        userId: ctx.user?.id,
+        chatId: ctx.chat?.id,
+        turnId: ctx.turnId,
+        kind: 'chat',
+        model: ctx.models.llm.model,
+        providerId: ctx.models.llm.providerId,
+        providerName: ctx.models.llm.providerName,
+        usage: retry.usage,
+        messages,
+        completionText: retry?.choices?.[0]?.message?.content,
+        toolCalls: [],
+        requestCount: 1,
+      });
+      text = String(retry?.choices?.[0]?.message?.content || '').trim();
+    } catch (err) {
+      if (ctx.signal?.aborted) throw err;
+      // A failed last attempt must not lose the turn: fall through to the
+      // explanation below, which still reports that the work was done.
+      text = '';
+    }
+  }
   if (!text) {
+    // The turn did work but produced no prose. Say what actually happened
+    // instead of claiming the request was not understood: the tool results are
+    // gone once this call returns, so promising a later "continue" would be a
+    // promise this code cannot keep.
     text = ctx.createdDocuments
       ? '文档已生成，可在「我的文档」中查看和下载。'
       : ctx.turnImages?.length
         ? '图片已生成。'
-        : '抱歉，我没有理解你的需求，可以换个说法再试一次。';
+        : toolSteps > 0
+          ? `这一轮调用了 ${toolSteps} 次工具，但模型没有产出结论，所以没有可交付的分析。工具结果不会保留到下一轮，建议重新提问一次，或把范围缩小到具体模块再试。`
+          : '抱歉，我没有理解你的需求，可以换个说法再试一次。';
   }
   return { text, process: processParts.join('\n\n') };
 }

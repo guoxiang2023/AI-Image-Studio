@@ -414,3 +414,168 @@ test('an Anthropic-protocol stream delivers the envelope as text and still runs 
     await rm(dataDir, { recursive: true, force: true });
   }
 });
+
+// The turn that made the fix look broken: the model answers every round with an
+// in-band call and never writes prose. On the final round the request carries no
+// tools at all, so there is nothing left to dispatch — that round has to end the
+// turn with an explanation instead of the generic "I did not understand you".
+test('a turn that only ever emits calls still ends with a truthful message', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'luma-dsml-loop-'));
+  process.env.DATA_DIR = dataDir;
+  initDb(dataDir);
+
+  const requests = [];
+  const rounds = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (chunk) => (body += chunk));
+    req.on('end', () => {
+      const parsed = JSON.parse(body || '{}');
+      requests.push(parsed);
+      rounds.push(Array.isArray(parsed.tools) ? parsed.tools.length : 0);
+      res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' });
+      res.end(
+        `data: ${JSON.stringify({ choices: [{ delta: { content: ENVELOPE }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`,
+      );
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+
+  try {
+    const { runAgent } = await import('../src/services/agent-service.js');
+    const result = await runAgent({
+      user: { id: 'a'.repeat(16) },
+      chat: { id: 'b'.repeat(16), messages: [], summary: '', summaryUpto: 0 },
+      models: {
+        llm: {
+          baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
+          model: 'test',
+          apiKey: 'test',
+        },
+        image: {},
+      },
+      options: {},
+      workspace: null,
+      turnId: 'turn-loop',
+      userText: '分析一下这个代码库',
+      emit: () => {},
+      signal: undefined,
+      turnImages: [],
+    });
+
+    // The tool budget is spent, and from then on no request offers tools: the
+    // in-loop final round plus the one bounded synthesis retry.
+    assert.ok(rounds.length > 2, 'the loop dispatched tool rounds');
+    const toolRounds = rounds.filter((count) => count > 0).length;
+    assert.ok(toolRounds > 0 && toolRounds === rounds.length - 2, 'one tool-less round, then one retry');
+    assert.ok(
+      rounds.slice(0, toolRounds).every((count) => count > 0) &&
+        rounds.slice(toolRounds).every((count) => count === 0),
+      'tools stop being offered once the budget is spent',
+    );
+    // A call volunteered on the final round has no round left to run in, so the
+    // tool must not execute it. The workspace is unbound here, so any dispatch
+    // shows up as the refusal payload — counting those pairs proves none came
+    // from the last round.
+    const lastRequest = requests[requests.length - 1];
+    const toolReplies = lastRequest.messages.filter((message) => message.role === 'tool');
+    assert.equal(
+      lastRequest.messages[lastRequest.messages.length - 1].role,
+      'user',
+      'the last request ends on the reminder, not on a tool reply',
+    );
+    assert.equal(
+      toolReplies.length,
+      2 * toolRounds,
+      'exactly the rounds with budget dispatched; the tool-less ones did not',
+    );
+    // A dispatch on the tool-less round would still bump the counter, even though
+    // its reply never reaches another request. The stated count is therefore the
+    // only place that wasted call is observable.
+    const stated = /调用了 (\d+) 次工具/.exec(result.text);
+    assert.ok(stated, 'the fallback states how many calls ran');
+    assert.equal(Number(stated[1]), toolRounds, 'the tool-less rounds ran nothing');
+
+    // A turn that gathered results must not claim it misunderstood the question.
+    assert.doesNotMatch(result.text, /没有理解你的需求/);
+    assert.match(result.text, /调用了 \d+ 次工具/);
+    assert.doesNotMatch(result.text, /DSML/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    closeDb();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+// The synthesis retry is what makes a tool-heavy turn salvageable: the tool
+// results never leave runAgent, so the answer has to be written in the same turn
+// or not at all. A "continue" from the user starts from an empty history.
+test('the budgets are spent, so the answer is synthesized in the same turn', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'luma-dsml-synth-'));
+  process.env.DATA_DIR = dataDir;
+  initDb(dataDir);
+
+  const requests = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (chunk) => (body += chunk));
+    req.on('end', () => {
+      const parsed = JSON.parse(body || '{}');
+      requests.push(parsed);
+      const offersTools = Array.isArray(parsed.tools) && parsed.tools.length > 0;
+      // Every tool round emits an envelope; the two tool-less rounds answer in
+      // prose the second time, which is the case that must reach the user.
+      const content = offersTools
+        ? ENVELOPE
+        : requests.length === 6
+          ? ''
+          : '根据检索到的代码，慢查询集中在报表 SQL 的跨周期扫描上。';
+      res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' });
+      res.end(
+        `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`,
+      );
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+
+  try {
+    const { runAgent } = await import('../src/services/agent-service.js');
+    const result = await runAgent({
+      user: { id: 'a'.repeat(16) },
+      chat: { id: 'b'.repeat(16), messages: [], summary: '', summaryUpto: 0 },
+      models: {
+        llm: {
+          baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
+          model: 'test',
+          apiKey: 'test',
+        },
+        image: {},
+      },
+      options: {},
+      workspace: null,
+      turnId: 'turn-synth',
+      userText: '分析一下报表性能',
+      emit: () => {},
+      signal: undefined,
+      turnImages: [],
+    });
+
+    // The retry exists and carried the observations along.
+    assert.ok(requests.length >= 7, `expected a retry request, saw ${requests.length}`);
+    const retry = requests[requests.length - 1];
+    assert.equal(retry.tools, undefined, 'the retry offers no tools');
+    const observation = retry.messages.find(
+      (message) => message.role === 'tool',
+    );
+    assert.ok(observation, 'the retry still carries the tool observations');
+
+    // And its prose is what the user gets.
+    assert.match(result.text, /慢查询集中在报表 SQL/);
+    assert.doesNotMatch(result.text, /没有可交付的分析/);
+    assert.doesNotMatch(result.text, /没有理解你的需求/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    closeDb();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
