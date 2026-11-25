@@ -564,10 +564,17 @@ test('the budgets are spent, so the answer is synthesized in the same turn', asy
     assert.ok(requests.length >= 7, `expected a retry request, saw ${requests.length}`);
     const retry = requests[requests.length - 1];
     assert.equal(retry.tools, undefined, 'the retry offers no tools');
-    const observation = retry.messages.find(
-      (message) => message.role === 'tool',
+    // Every batch that was allowed to dispatch is present, and no batch from the
+    // tool-less rounds sneaked in: five rounds x two calls each.
+    const observations = retry.messages.filter((message) => message.role === 'tool');
+    const dispatched = requests.filter(
+      (request) => Array.isArray(request.tools) && request.tools.length > 0,
+    ).length;
+    assert.equal(
+      observations.length,
+      2 * dispatched,
+      'the retry carries exactly the dispatched tool results',
     );
-    assert.ok(observation, 'the retry still carries the tool observations');
 
     // And its prose is what the user gets.
     assert.match(result.text, /慢查询集中在报表 SQL/);
