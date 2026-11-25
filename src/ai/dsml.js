@@ -3,21 +3,23 @@
  *
  * Newer DeepSeek models (the V4 family) emit their tool-call envelope as markup
  * rather than as structured `tool_calls` / `tool_use` blocks, and
- * Anthropic-compatible gateways proxy that text through verbatim. What reaches
- * the client, and what the bug-report screenshot shows, is the double-bar
- * spelling:
+ * Anthropic-compatible gateways proxy that text through verbatim. What actually
+ * reaches the client, taken from the bug report:
  *
- *   <||DSML||calls>
- *   <||DSML||invoke name="search_workspace">
- *   <||DSML||parameter name="max_results" string="false">40</||DSML||parameter>
- *   <||DSML||parameter name="query" string="true">ROWNUM</||DSML||parameter>
- *   </||DSML||invoke>
- *   </||DSML||calls>
+ *   <｜｜DSML｜｜ calls>
+ *   <｜｜DSML｜｜ invoke name="search_workspace">
+ *   <｜｜DSML｜｜ parameter name="query" string="true">ROWNUM</｜｜DSML｜｜ parameter>
+ *   </｜｜DSML｜｜ invoke>
+ *   </｜｜DSML｜｜ calls>
  *
- * Three spellings occur on the wire and all are accepted:
- *   `<||DSML||`  double ASCII bar, what the failing gateway emits
- *   `<|DSML|`     single ASCII bar
- *   `<｜<｜place▁holder▁no▁572｜>｜` fullwidth bar (U+FF5C)
+ * The bar and the name are separated by whitespace, the bar runs are one or two
+ * characters wide, and the bar itself may be ASCII (`|`) or fullwidth (`｜`,
+ * U+FF5C). All of those spellings are accepted:
+ *
+ *   `<｜｜DSML｜｜ `  what the gateway in the bug report emits
+ *   `<||DSML||`  the same shape with ASCII bars
+ *   `<|DSML| `   a single ASCII bar
+ *
  * `string="false"` means the body is JSON and must be decoded; anything else
  * (the attribute omitted, or "true") stays a raw string.
  *
@@ -25,62 +27,99 @@
  *
  *  1. Display recovery and call recovery are independent. Markup is withheld
  *     from the visible answer even when no call can be recovered from it.
- *  2. A call is synthesized only from an explicit `</invoke>` whose parameters
- *     all closed. A truncated envelope must not be dispatched: its last
- *     parameter would swallow the following prose, and a syntactically valid
- *     JSON argument is all the agent loop checks before running the tool.
+ *  2. A call is released only by its own `</invoke>`. A truncated envelope must
+ *     not be dispatched: its last parameter would swallow the following prose,
+ *     and a syntactically valid JSON argument is all the agent loop checks
+ *     before running the tool.
  */
 
 import { newId } from '../shared/utils.js';
 
-// One bar run: one or two bars, ASCII or fullwidth.
-const BAR = '(?:[|｜]{1,2})';
-// A complete tag at a position. The `y` flag anchors the match at `lastIndex`,
-// so no `^` may be used: with sticky matching `^` only ever matches offset 0.
-const TAG_AT = new RegExp(`<(\\/?)${BAR}DSML${BAR}([A-Za-z_]+)([^>]*)>`, 'y');
+// One bar run: one or two characters, ASCII or fullwidth.
+const BARS = '[|｜]{1,2}';
+// A tag head, with the name separated by optional whitespace: `<｜｜DSML｜｜ calls>`.
+const HEAD = `<(\\/?)${BARS}DSML${BARS}[ \\t\\r\\n]*`;
+
+// Sticky: the tag must start exactly at `lastIndex`, so no `^` may be used —
+// with sticky matching `^` only ever matches offset 0.
+const TAG_AT = new RegExp(`${HEAD}([A-Za-z_]+)([^>]*)>`, 'y');
+const HEAD_AT = new RegExp(HEAD, 'y');
+
 const ENVELOPE_TAGS = new Set(['calls', 'invoke', 'parameter']);
 
-// Every tag a spelling can start with, longest first, so a buffer ending in
-// `<||DS` is held back instead of shown and then reclassified.
-const PREFIXES = [
-  '<||DSML||',
-  '</||DSML||',
-  '<|DSML|',
-  '</|DSML|',
-  '<\uff5c\uff5cDSML\uff5c\uff5c',
-  '</\uff5c\uff5cDSML\uff5c\uff5c',
-  '<\uff5cDSML\uff5c',
-  '</\uff5cDSML\uff5c',
-].sort((a, b) => b.length - a.length);
-const CLOSE_PREFIXES = PREFIXES.filter((prefix) => prefix.startsWith('</'));
-// A parameter body is opaque and this format has no escape, so the only thing
-// that can end one is its own closing tag. Searching for every closing tag
-// would end the body at a lookalike such as `</||DSML||invoke>` written inside
-// the value, and the value would then be truncated.
-const PARAM_CLOSE_PREFIXES = CLOSE_PREFIXES.map((prefix) => `${prefix}parameter`);
-
-function earliest(buffer, needles, from = 0) {
-  let at = -1;
-  for (const needle of needles) {
-    const index = buffer.indexOf(needle, from);
-    if (index >= 0 && (at < 0 || index < at)) at = index;
+/**
+ * Whether `text` could be the beginning of a tag that has not finished yet.
+ *
+ * Used to hold back a trailing fragment — `text<｜DS` — so a half-written tag is
+ * never shown and then reclassified once the rest of it arrives.
+ */
+function couldStartTag(text) {
+  if (!text.startsWith('<')) return false;
+  let at = 1;
+  if (text[at] === '/') at += 1;
+  let bars = 0;
+  while (at < text.length && (text[at] === '|' || text[at] === '｜') && bars < 2) {
+    at += 1;
+    bars += 1;
   }
-  return at;
+  if (bars === 0) return at === text.length;
+  const name = 'DSML';
+  let matched = 0;
+  while (at < text.length && matched < 4 && text[at] === name[matched]) {
+    at += 1;
+    matched += 1;
+  }
+  if (matched < 4) return at === text.length;
+  // Past `DSML`, everything up to the closing `>` belongs to the tag.
+  return true;
 }
 
-// How many trailing characters may be the start of a tag whose end has not
-// arrived yet. They are held back so a half-written tag never reaches the screen.
-function partialPrefixLength(buffer, needles) {
-  let keep = 0;
-  for (const needle of needles) {
-    for (let k = Math.min(needle.length - 1, buffer.length); k > keep; k -= 1) {
-      if (buffer.endsWith(needle.slice(0, k))) {
-        keep = k;
-        break;
-      }
-    }
+// How many trailing characters may be the opening of a tag. They are held back.
+function incompleteTagLength(buffer) {
+  const limit = Math.min(buffer.length, 16);
+  for (let size = limit; size > 0; size -= 1) {
+    if (couldStartTag(buffer.slice(buffer.length - size))) return size;
   }
-  return keep;
+  return 0;
+}
+
+// Where the next tag starts, or -1. Anything else is ordinary text.
+function findTagStart(buffer, from = 0) {
+  let at = buffer.indexOf('<', from);
+  while (at >= 0) {
+    HEAD_AT.lastIndex = at;
+    if (HEAD_AT.exec(buffer)) return at;
+    at = buffer.indexOf('<', at + 1);
+  }
+  return -1;
+}
+
+// Parses the complete tag at `at`, or returns null when it is still incomplete.
+function readTag(text, at) {
+  TAG_AT.lastIndex = at;
+  const match = TAG_AT.exec(text);
+  if (!match) return null;
+  return {
+    closing: match[1] === '/',
+    name: match[2],
+    attrs: match[3] || '',
+    raw: match[0],
+    start: at,
+    end: TAG_AT.lastIndex,
+  };
+}
+
+// The next closing tag after `from`, skipping opening tags — a parameter body is
+// opaque, and this format has no escape, so the first closing tag ends it.
+function nextClosingTag(markup, from) {
+  let at = findTagStart(markup, from);
+  while (at >= 0) {
+    const tag = readTag(markup, at);
+    if (!tag) return null;
+    if (tag.closing) return tag;
+    at = findTagStart(markup, tag.end);
+  }
+  return null;
 }
 
 function attribute(attrs, name) {
@@ -98,27 +137,12 @@ function decodeValue(value, raw) {
   }
 }
 
-// Parses the complete tag at `at`, or returns null when it is not one.
-function readTag(text, at) {
-  TAG_AT.lastIndex = at;
-  const match = TAG_AT.exec(text);
-  if (!match) return null;
-  return {
-    closing: match[1] === '/',
-    name: match[2],
-    attrs: match[3] || '',
-    raw: match[0],
-    end: TAG_AT.lastIndex,
-  };
-}
-
 /**
  * Walks the tag stream and returns the calls it contains.
  *
- * A `parameter` body is opaque: the parser jumps from its opening tag to the
- * next closing tag, so arbitrary text — including text that looks like other
- * tags — is read as the value it is. If that next closing tag is not
- * `</parameter>`, the parameter never closed and the scan stops.
+ * A `parameter` body is read as the text up to the next closing tag, so a value
+ * that merely looks like a tag is kept as the value it is. If that closing tag
+ * is not `</parameter>`, the parameter never closed and the scan stops.
  *
  * A call is released only by its own `</invoke>`. When a new `invoke` opens
  * before that, the previous one was truncated and is dropped: a closed parameter
@@ -140,45 +164,37 @@ export function parseDsmlCalls(markup) {
     });
   };
 
-  let at = 0;
-  while (at < markup.length) {
+  let at = findTagStart(markup, 0);
+  while (at >= 0) {
     const tag = readTag(markup, at);
-    if (!tag) {
-      const next = earliest(markup, PREFIXES, at + 1);
-      if (next < 0) break;
-      at = next;
-      continue;
-    }
-    at = tag.end;
+    if (!tag) break;
 
     if (tag.closing) {
       if (tag.name === 'invoke') {
         emit();
         current = null;
       }
+      at = findTagStart(markup, tag.end);
       continue;
     }
 
     if (tag.name === 'invoke') {
-      // A new call without closing the previous one means the previous was
-      // truncated; drop it rather than run it half-read.
       current = { name: attribute(tag.attrs, 'name'), arguments: {} };
+      at = findTagStart(markup, tag.end);
       continue;
     }
 
-    if (tag.name !== 'parameter' || !current) continue;
+    if (tag.name !== 'parameter' || !current) {
+      at = findTagStart(markup, tag.end);
+      continue;
+    }
 
+    const close = nextClosingTag(markup, tag.end);
+    if (!close || close.name !== 'parameter') break;
     const name = attribute(tag.attrs, 'name');
     const raw = attribute(tag.attrs, 'string') !== 'false';
-    const closeAt = earliest(markup, PARAM_CLOSE_PREFIXES, at);
-    const close = closeAt < 0 ? null : readTag(markup, closeAt);
-    if (!close) {
-      // The body never closed: everything after it is suspect, so nothing here
-      // is usable and the scan ends.
-      break;
-    }
-    if (name) current.arguments[name] = decodeValue(markup.slice(at, closeAt), raw);
-    at = close.end;
+    if (name) current.arguments[name] = decodeValue(markup.slice(tag.end, close.start), raw);
+    at = findTagStart(markup, close.end);
   }
   return calls;
 }
@@ -189,8 +205,8 @@ export function parseDsmlCalls(markup) {
  *
  * An answer may mix prose with a call (DeepSeek writes its analysis first), so
  * prose is emitted as it arrives while the envelope is withheld. Chunk
- * boundaries are arbitrary, so nothing is re-classified after the fact: an
- * incomplete tag stays in `#pending` until its `>` arrives.
+ * boundaries are arbitrary, so nothing is re-classified after the fact: a
+ * fragment that could still be the start of a tag stays in `#pending`.
  *
  * Only whitespace is envelope structure between tags. Any other run of text
  * while the stack is open means the envelope was malformed — an unclosed
@@ -207,44 +223,39 @@ export class DsmlStream {
     let visible = '';
     for (;;) {
       const inParameter = this.#stack[this.#stack.length - 1] === 'parameter';
-      // Inside a parameter body every byte belongs to the value, so only its own
-      // closing tag can end the run. Elsewhere any tag can start structure.
-      const needles = inParameter ? PARAM_CLOSE_PREFIXES : PREFIXES;
-      const at = earliest(this.#pending, needles);
+      const at = findTagStart(this.#pending);
 
       if (at < 0) {
-        // No complete tag in sight: the tail may still become one, so hold back
-        // only what could be a tag prefix.
-        const end = this.#pending.length - partialPrefixLength(this.#pending, needles);
+        // No tag in sight. A trailing fragment that may still become a tag is
+        // held back, and a whitespace run with the stack open stays in the
+        // buffer untouched: between tags it is envelope structure, but inside a
+        // malformed envelope it is the answer's own spacing
+        // (`<calls>hello world`). Consuming it here dropped the space whenever
+        // the chunk boundary fell after it.
+        const keep = incompleteTagLength(this.#pending);
+        const end = this.#pending.length - keep;
         const run = this.#pending.slice(0, end);
-        if (inParameter) {
-          // A parameter body is opaque, whitespace included.
-          this.#markup += run;
-          this.#pending = this.#pending.slice(end);
-        } else if (this.#stack.length && !run.trim()) {
-          // Whitespace with the stack open is undecided: between tags it is
-          // envelope structure, but inside a malformed envelope it is the
-          // answer's own spacing (`<calls>hello world`). Leave it in the buffer
-          // and let the next non-space byte — prose or a real tag — decide, so
-          // the same reply renders the same however it was chunked.
-          return visible;
-        } else {
-          visible += run;
-          this.#pending = this.#pending.slice(end);
-        }
+        if (!inParameter && this.#stack.length && !run.trim()) return visible;
+        this.#pending = this.#pending.slice(end);
+        if (inParameter) this.#markup += run;
+        else visible += run;
         return visible;
       }
 
-      const tag = readTag(this.#pending, at);
       const run = this.#pending.slice(0, at);
-      this.#pending = this.#pending.slice(tag ? tag.end : at);
-      // A text run is decided by its own content, never by where a chunk ended:
-      // a parameter body is withheld, whitespace directly between two tags is
-      // envelope structure, and anything else is the answer, emitted verbatim so
-      // its own newlines survive.
+      this.#pending = this.#pending.slice(at);
       if (inParameter || (this.#stack.length && !run.trim())) this.#markup += run;
       else visible += run;
+
+      const tag = readTag(this.#pending, 0);
       if (!tag) return visible;
+      this.#pending = this.#pending.slice(tag.end);
+
+      if (inParameter && !tag.closing) {
+        // A lookalike opening tag inside a body is part of the value.
+        this.#markup += tag.raw;
+        continue;
+      }
 
       if (!ENVELOPE_TAGS.has(tag.name)) {
         // The model mentioning the format rather than calling it. Outside an
@@ -252,6 +263,7 @@ export class DsmlStream {
         if (!this.#stack.length) visible += tag.raw;
         continue;
       }
+
       this.#markup += tag.raw;
       if (tag.closing) {
         if (this.#stack[this.#stack.length - 1] === tag.name) this.#stack.pop();

@@ -7,38 +7,99 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { closeDb, initDb } from '../src/data/database.js';
 import { DsmlStream, splitDsmlText } from '../src/ai/dsml.js';
 
-// The exact shape the screenshot shows: a DeepSeek V4 gateway proxied its DSML
-// envelope as ordinary assistant text, and it uses the DOUBLE-bar spelling
-// `<||DSML||…>`. Two searches, one numeric argument (`string="false"`) and one
-// raw string (`string="true"`).
+// The exact bytes from the bug report, pulled out of the desktop chat store. The
+// gateway writes the name with a SPACE after the bar run (`<｜｜DSML｜｜ calls>`), the
+// bars are FULLWIDTH and doubled, and one query value contains a `|` of its own:
+//   '<｜｜DSML｜｜ calls>'
+//   '<｜｜DSML｜｜ invoke name="search_workspace">'
+//   '<｜｜DSML｜｜ parameter name="query" string="true">^## </｜｜DSML｜｜ parameter>'
+//   '<｜｜DSML｜｜ parameter name="max_results" string="false">40</｜｜DSML｜｜ parameter>'
+//   '</｜｜DSML｜｜ invoke>'
+//   ...
+const B = '\uff5c\uff5c'; // two fullwidth vertical lines
 const ENVELOPE = [
-  '<||DSML||calls>',
-  '<||DSML||invoke name="search_workspace">',
-  '<||DSML||parameter name="max_results" string="false">40</||DSML||parameter>',
-  '<||DSML||parameter name="query" string="true">CREATE OR REPLACE VIEW</||DSML||parameter>',
-  '</||DSML||invoke>',
-  '<||DSML||invoke name="search_workspace">',
-  '<||DSML||parameter name="max_results" string="false">40</||DSML||parameter>',
-  '<||DSML||parameter name="query" string="true">ROWNUM</||DSML||parameter>',
-  '</||DSML||invoke>',
-  '</||DSML||calls>',
+  `<${B}DSML${B} calls>`,
+  `<${B}DSML${B} invoke name="search_workspace">`,
+  `<${B}DSML${B} parameter name="query" string="true">^## </${B}DSML${B} parameter>`,
+  `<${B}DSML${B} parameter name="max_results" string="false">40</${B}DSML${B} parameter>`,
+  `</${B}DSML${B} invoke>`,
+  `<${B}DSML${B} invoke name="search_workspace">`,
+  `<${B}DSML${B} parameter name="query" string="true">\u505c\u6b62\u7ebf|M1|\u9a8c\u6536\u6807\u51c6</${B}DSML${B} parameter>`,
+  `<${B}DSML${B} parameter name="max_results" string="false">30</${B}DSML${B} parameter>`,
+  `</${B}DSML${B} invoke>`,
+  `</${B}DSML${B} calls>`,
 ].join('\n');
 
-test('the double-bar envelope from the screenshot becomes calls', () => {
+// Verbatim from the desktop chat store (`app.db`, chat 408823bf…), the message
+// that made 1.1.1 look broken. Kept byte-for-byte, in its own test, so any future
+// change to the tag grammar has to keep parsing this exact string.
+const REAL_WIRE = [
+  '<\uff5c\uff5cDSML\uff5c\uff5c calls>',
+  '<\uff5c\uff5cDSML\uff5c\uff5c invoke name="search_workspace">',
+  '<\uff5c\uff5cDSML\uff5c\uff5c parameter name="query" string="true">^## </\uff5c\uff5cDSML\uff5c\uff5c parameter>',
+  '<\uff5c\uff5cDSML\uff5c\uff5c parameter name="max_results" string="false">40</\uff5c\uff5cDSML\uff5c\uff5c parameter>',
+  '</\uff5c\uff5cDSML\uff5c\uff5c invoke>',
+  '<\uff5c\uff5cDSML\uff5c\uff5c invoke name="search_workspace">',
+  '<\uff5c\uff5cDSML\uff5c\uff5c parameter name="query" string="true">\u505c\u6b62\u7ebf|\u91cc\u7a0b\u7891|M1|\u9a8c\u6536\u6807\u51c6|\u9644\u5f55 A</\uff5c\uff5cDSML\uff5c\uff5c parameter>',
+  '<\uff5c\uff5cDSML\uff5c\uff5c parameter name="max_results" string="false">30</\uff5c\uff5cDSML\uff5c\uff5c parameter>',
+  '</\uff5c\uff5cDSML\uff5c\uff5c invoke>',
+  '</\uff5c\uff5cDSML\uff5c\uff5c calls>',
+].join('\n');
+
+test('the exact bytes that leaked in the 1.1.1 report parse', () => {
+  const { text, calls } = splitDsmlText(REAL_WIRE);
+  assert.equal(text, '', 'nothing visible');
+  assert.equal(calls.length, 2);
+  assert.deepEqual(
+    calls.map((call) => JSON.parse(call.function.arguments)),
+    [
+      { query: '^## ', max_results: 40 },
+      { query: '停止线|里程碑|M1|验收标准|附录 A', max_results: 30 },
+    ],
+  );
+});
+
+test('the envelope from the bug report becomes calls', () => {
   const { text, calls } = splitDsmlText(`我先看一下代码库。\n${ENVELOPE}`);
   assert.equal(text.trim(), '我先看一下代码库。');
   assert.equal(calls.length, 2);
   assert.equal(calls[0].type, 'function');
   assert.equal(calls[0].function.name, 'search_workspace');
   assert.deepEqual(JSON.parse(calls[0].function.arguments), {
+    query: '^## ',
     max_results: 40,
-    query: 'CREATE OR REPLACE VIEW',
   });
   assert.deepEqual(JSON.parse(calls[1].function.arguments), {
-    max_results: 40,
-    query: 'ROWNUM',
+    query: '停止线|M1|验收标准',
+    max_results: 30,
   });
   assert.ok(calls.every((call) => call.id), 'every recovered call carries an id');
+});
+
+test('the space after the bar run is optional', () => {
+  const tight = [
+    `<${B}DSML${B}calls>`,
+    `<${B}DSML${B}invoke name="a">`,
+    `<${B}DSML${B}parameter name="q" string="true">x</${B}DSML${B}parameter>`,
+    `</${B}DSML${B}invoke>`,
+    `</${B}DSML${B}calls>`,
+  ].join('');
+  const r = splitDsmlText(tight);
+  assert.equal(r.text, '');
+  assert.deepEqual(JSON.parse(r.calls[0].function.arguments), { q: 'x' });
+});
+
+test('ASCII bars with and without the separator space decode too', () => {
+  for (const env of [
+    ['<||DSML|| calls>', '<||DSML|| invoke name="a">', '<||DSML|| parameter name="q" string="true">', '</||DSML|| parameter>', '</||DSML|| invoke>', '</||DSML|| calls>'],
+    ['<|DSML| calls>', '<|DSML| invoke name="a">', '<|DSML| parameter name="q" string="true">', '</|DSML| parameter>', '</|DSML| invoke>', '</|DSML| calls>'],
+  ]) {
+    const markup = [env[0], env[1], env[2] + 'x' + env[3], env[4], env[5]].join('\n');
+    const r = splitDsmlText(markup);
+    assert.equal(r.text, '', `${env[0]} leaves no visible text`);
+    assert.equal(r.calls.length, 1, `${env[0]} yields one call`);
+    assert.deepEqual(JSON.parse(r.calls[0].function.arguments), { q: 'x' });
+  }
 });
 
 test('single-bar and fullwidth spellings decode identically', () => {
@@ -112,8 +173,8 @@ test('no split point leaks markup or eats trailing prose', () => {
     const calls = stream.calls();
     assert.equal(calls.length, 2, `split at ${cut} recovers both calls`);
     assert.deepEqual(JSON.parse(calls[1].function.arguments), {
-      max_results: 40,
-      query: 'ROWNUM',
+      query: '停止线|M1|验收标准',
+      max_results: 30,
     });
   }
 
