@@ -11,6 +11,7 @@ import {
   TOOLS,
 } from './prompts.js';
 import { openAiReasoning } from './reasoning.js';
+import { DsmlStream, healDsmlResponse } from './dsml.js';
 import {
   anthropicToOpenAiResponse,
   buildAnthropicRequest,
@@ -127,7 +128,7 @@ export async function chatCompletion(
 
     try {
       const parsed = JSON.parse(text);
-      return anthropic ? anthropicToOpenAiResponse(parsed) : parsed;
+      return healDsmlResponse(anthropic ? anthropicToOpenAiResponse(parsed) : parsed);
     } catch (err) {
       if (err instanceof SyntaxError) throw new Error('对话模型返回了无法解析的内容');
       throw err;
@@ -170,6 +171,7 @@ async function readChatStream(res, onDelta, onActivity) {
   const decoder = new TextDecoder();
   const content = [];
   const calls = new Map();
+  const dsml = new DsmlStream();
   let finishReason = null;
   let terminal = false;
   let completed = false;
@@ -201,8 +203,13 @@ async function readChatStream(res, onDelta, onActivity) {
     const delta = choice.delta || choice.message || {};
     const text = deltaText(delta.content);
     if (text) {
-      content.push(text);
-      onDelta?.(text);
+      // DeepSeek may stream its tool-call envelope as prose. Prose is forwarded
+      // as it arrives; the envelope is withheld and re-read as calls below.
+      const visible = dsml.push(text);
+      if (visible) {
+        content.push(visible);
+        onDelta?.(visible);
+      }
     }
     if (Array.isArray(delta.tool_calls)) {
       for (const part of delta.tool_calls) mergeToolCall(calls, part);
@@ -236,11 +243,25 @@ async function readChatStream(res, onDelta, onActivity) {
     throw error;
   }
 
+  const tail = dsml.flush();
+  if (tail) {
+    content.push(tail);
+    onDelta?.(tail);
+  }
   const message = { role: 'assistant', content: content.join('') };
   if (calls.size) {
     message.tool_calls = [...calls.entries()]
       .sort(([a], [b]) => a - b)
       .map(([, call]) => call);
+    if (!finishReason || finishReason === 'stop') finishReason = 'tool_calls';
+  } else {
+    // Only when the provider sent no structured call: one that returns both
+    // must not dispatch the same batch twice.
+    const recovered = dsml.calls();
+    if (recovered.length) {
+      message.tool_calls = recovered;
+      if (!finishReason || finishReason === 'stop') finishReason = 'tool_calls';
+    }
   }
   return {
     choices: [{ index: 0, message, finish_reason: finishReason }],
@@ -348,6 +369,9 @@ export async function streamChatCompletion(
             throw err;
           }
         }
+        // A non-streaming reply can carry the same envelope; heal it before the
+        // text is emitted, or the markup reaches the screen and no tool runs.
+        healDsmlResponse(parsed);
         const responseText = parsed?.choices?.[0]?.message?.content;
         if (typeof responseText === 'string' && responseText) emitDelta(responseText);
         return parsed;

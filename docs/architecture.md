@@ -81,6 +81,8 @@ src/
     render.js                     # SVG 版式渲染、图片槽位、二维码
   ai/
     llm.js                        # Chat/Image 请求与提示词优化
+    anthropic.js                  # Anthropic Messages 协议：请求/响应/流式转换
+    dsml.js                       # 从正文里还原 DSML 工具调用（网关不结构化时）
     reasoning.js                  # 推理等级规范化与接口字段映射
     prompts.js                    # 系统提示词和工具 Schema
   media/
@@ -242,6 +244,12 @@ app.js
 - 请求格式差异放在 `ai/llm.js` 或新建 `ai/providers/`。
 - 业务工具参数仍由 `services/tools-service.js` 管理。
 - 新增能力不要污染 `http/routes`。
+
+### 处理模型协议泄漏
+
+- 有的网关不把工具调用结构化，而是把它当正文吐出（DeepSeek V4 的 DSML 信封）。`ai/dsml.js` 负责把这类标记从正文里剥掉并还原成 `tool_calls`。
+- 只从**显式关闭的**信封还原调用：参数未闭合的信封一律丢弃，否则参数体里会混进后续正文，而工具层只校验 JSON 可解析。
+- 新增协议变体时在 `test/dsml.test.js` 补夹具，并跑**全部切分点**，确保流式输出不随 chunk 边界变化。
 
 ### 新增前端功能
 

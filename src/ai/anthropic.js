@@ -1,5 +1,6 @@
 import { extractError } from '../shared/utils.js';
 import { anthropicReasoning } from './reasoning.js';
+import { DsmlStream } from './dsml.js';
 
 export const ANTHROPIC_VERSION = '2023-06-01';
 
@@ -285,6 +286,7 @@ export async function readAnthropicStream(res, onDelta, onActivity) {
   const text = [];
   const blocks = new Map();
   const calls = new Map();
+  const dsml = new DsmlStream();
   let stop = null;
   let inputTokens = 0;
   let cacheReadTokens = 0;
@@ -337,8 +339,11 @@ export async function readAnthropicStream(res, onDelta, onActivity) {
       };
       blocks.set(index, state);
       if (block.type === 'text' && block.text) {
-        text.push(block.text);
-        onDelta?.(block.text);
+        const visible = dsml.push(block.text);
+        if (visible) {
+          text.push(visible);
+          onDelta?.(visible);
+        }
       }
       return;
     }
@@ -347,8 +352,13 @@ export async function readAnthropicStream(res, onDelta, onActivity) {
       const block = blocks.get(data.index);
       const delta = data.delta || {};
       if (delta.type === 'text_delta' && delta.text) {
-        text.push(delta.text);
-        onDelta?.(delta.text);
+        // A gateway may proxy DeepSeek's DSML envelope as ordinary text; the
+        // markup is withheld and re-read as calls when the stream ends.
+        const visible = dsml.push(delta.text);
+        if (visible) {
+          text.push(visible);
+          onDelta?.(visible);
+        }
       } else if (delta.type === 'input_json_delta' && block) {
         block.inputJson += delta.partial_json || '';
       }
@@ -407,10 +417,25 @@ export async function readAnthropicStream(res, onDelta, onActivity) {
     throw error;
   }
 
+  const tail = dsml.flush();
+  if (tail) {
+    text.push(tail);
+    onDelta?.(tail);
+  }
   for (const index of blocks.keys()) finalizeTool(index);
   const message = { role: 'assistant', content: text.join('') };
   const toolCalls = [...calls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call);
-  if (toolCalls.length) message.tool_calls = toolCalls;
+  if (toolCalls.length) {
+    message.tool_calls = toolCalls;
+  } else {
+    // The envelope was proxied as text instead of `tool_use` blocks. Recover it,
+    // or the turn ends showing markup and no tool runs.
+    const recovered = dsml.calls();
+    if (recovered.length) {
+      message.tool_calls = recovered;
+      if (!stop || stop === 'end_turn' || stop === 'stop_sequence') stop = 'tool_use';
+    }
+  }
   const promptTokens = inputTokens + cacheReadTokens + cacheCreationTokens;
   return {
     choices: [{ index: 0, message, finish_reason: stopReason(stop) }],
