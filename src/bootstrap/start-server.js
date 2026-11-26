@@ -2,7 +2,7 @@ import http from 'node:http';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { initDb } from '../data/database.js';
+import { closeDb, initDb } from '../data/database.js';
 import { deleteExpiredAuthSessions } from '../data/repositories/auth-sessions.js';
 import { createSecretBox, hashPassword, randomToken } from '../auth/crypto.js';
 import { DATA_DIR, HOST, PORT, USERS_DIR } from '../config.js';
@@ -31,48 +31,94 @@ async function loadSecretKey(dataDir) {
   }
 }
 
+// Repositories share one SQLite connection. Hold ownership through startup and drain.
+let runtimeActive = false;
+
 export async function startServer({ host = HOST, port = PORT } = {}) {
+  if (runtimeActive) throw new Error('服务已在启动、运行或关闭中');
+  runtimeActive = true;
+
   try {
     process.umask(0o077);
   } catch {
     /* Windows has no useful umask */
   }
 
-  await mkdir(DATA_DIR, { recursive: true, mode: 0o700 });
-  await mkdir(USERS_DIR, { recursive: true, mode: 0o700 });
-  initDb(DATA_DIR);
-  await chmod(path.join(DATA_DIR, 'app.db'), 0o600).catch(() => {});
-  setSecretBox(createSecretBox(await loadSecretKey(DATA_DIR)));
-  setDummyPasswordHash(await hashPassword(randomToken()));
-  deleteExpiredAuthSessions();
-  setInterval(() => {
+  let server;
+  let cleanupTimer;
+  let ownsDb = false;
+  let closing;
+  const requests = new Set();
+
+  async function release() {
+    clearInterval(cleanupTimer);
     try {
-      deleteExpiredAuthSessions();
-    } catch {
-      /* ignore cleanup errors */
+      if (server?.listening) {
+        await new Promise((resolve) => {
+          server.close(resolve);
+          server.closeAllConnections();
+        });
+      }
+      // A closed socket can still have an async handler finalizing a chat or upload.
+      await Promise.allSettled(requests);
+      if (ownsDb) await shutdownOcr();
+    } finally {
+      if (ownsDb) {
+        closeDb();
+        setSecretBox(null);
+        setDummyPasswordHash('');
+      }
+      runtimeActive = false;
     }
-  }, 60 * 60 * 1000).unref();
+  }
 
-  const server = http.createServer(createApp());
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(port, host, resolve);
-  });
-  const address = server.address();
-  const actualPort = typeof address === 'object' && address ? address.port : port;
+  const close = () => (closing ??= release());
 
-  return {
-    server,
-    host,
-    port: actualPort,
-    dataDir: DATA_DIR,
-    close: () =>
-      new Promise((resolve) => {
-        server.close(() => resolve());
-        server.closeAllConnections?.();
-        // The OCR helper is a child process and the tesseract worker a thread;
-        // neither is tied to the HTTP server's lifetime on its own.
-        void shutdownOcr().catch(() => {});
-      }),
-  };
+  try {
+    await mkdir(DATA_DIR, { recursive: true, mode: 0o700 });
+    await mkdir(USERS_DIR, { recursive: true, mode: 0o700 });
+    initDb(DATA_DIR);
+    ownsDb = true;
+    await chmod(path.join(DATA_DIR, 'app.db'), 0o600).catch(() => {});
+    setSecretBox(createSecretBox(await loadSecretKey(DATA_DIR)));
+    setDummyPasswordHash(await hashPassword(randomToken()));
+    deleteExpiredAuthSessions();
+
+    const app = createApp();
+    server = http.createServer(async (req, res) => {
+      let request;
+      try {
+        request = app(req, res);
+        requests.add(request);
+        await request;
+      } catch (error) {
+        // The HTTP adapter normally sends an error response. If it too fails,
+        // terminate this response instead of rejecting the server listener.
+        console.error('HTTP 请求处理失败:', error);
+        res.destroy();
+      } finally {
+        requests.delete(request);
+      }
+    });
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(port, host, () => {
+        server.off('error', reject);
+        resolve();
+      });
+    });
+    cleanupTimer = setInterval(() => {
+      try {
+        deleteExpiredAuthSessions();
+      } catch {
+        /* ignore cleanup errors */
+      }
+    }, 60 * 60 * 1000).unref();
+
+    const actualPort = server.address()?.port ?? port;
+    return { server, host, port: actualPort, dataDir: DATA_DIR, close };
+  } catch (error) {
+    await close();
+    throw error;
+  }
 }

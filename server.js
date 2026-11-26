@@ -10,9 +10,13 @@ async function main() {
     }`,
   );
 
-  const shutdown = () => {
-    runtime.close();
-    setTimeout(() => process.exit(0), 3000).unref();
+  const shutdown = async () => {
+    try {
+      await runtime.close();
+    } catch (error) {
+      console.error('关闭失败:', error);
+      process.exitCode = 1;
+    }
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);

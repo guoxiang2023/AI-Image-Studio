@@ -4,7 +4,19 @@ import path from 'node:path';
 let db = null;
 
 export function initDb(dataDir) {
-  db = new DatabaseSync(path.join(dataDir, 'app.db'));
+  if (db) throw new Error('数据库已初始化');
+  const connection = new DatabaseSync(path.join(dataDir, 'app.db'));
+  try {
+    initializeSchema(connection);
+  } catch (error) {
+    connection.close();
+    throw error;
+  }
+  db = connection;
+  return db;
+}
+
+function initializeSchema(db) {
   db.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA busy_timeout = 5000;
@@ -176,12 +188,10 @@ export function initDb(dataDir) {
   }
   db.exec('CREATE INDEX IF NOT EXISTS idx_gallery_images_group ON gallery_images(user_id, group_id)');
 
-  backfillGallery();
-
-  return db;
+  backfillGallery(db);
 }
 
-function backfillGallery() {
+function backfillGallery(db) {
   const chats = db.prepare('SELECT id, user_id, messages_json, created_at FROM chats').all();
   if (!chats.length) return;
   const insert = db.prepare(

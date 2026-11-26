@@ -15,7 +15,7 @@ const APP_NAME = 'Luma';
 const APP_ID = 'com.luma.imagegen';
 let runtime = null;
 let mainWindow = null;
-let quitting = false;
+let closing = false;
 
 app.setName(APP_NAME);
 // Full rename: use a fresh userData directory. Legacy 画境 data is left untouched.
@@ -229,8 +229,16 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => {
-  if (quitting) return;
-  quitting = true;
-  runtime?.close();
+app.on('before-quit', (event) => {
+  if (!runtime) return;
+  event.preventDefault();
+  if (closing) return;
+  closing = true;
+  runtime.close().then(() => {
+    runtime = null;
+    app.quit();
+  }).catch((error) => {
+    console.error('Luma 关闭失败:', error);
+    app.exit(1);
+  });
 });
