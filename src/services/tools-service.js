@@ -446,13 +446,16 @@ async function createDocument(args, ctx) {
         image_count: document.imageCount,
         ...(result.slideCount ? { slide_count: result.slideCount } : {}),
       },
-      note: degraded
-        ? `文档已生成并保存，但页面策划${result.planStatus === 'salvaged' ? '被截断，只保留了写完整的页面' : '失败，已退回按原文机械分页'}。这是初稿，需要重新整理后再交付。请如实告诉用户这一点，不要让用户以为这是可直接评审的终稿。`
-        : partialVisual
-          ? `视觉稿已生成并保存。其中第 ${partialVisual.join('、')} 页未能绘制，这几页保留了可编辑的文字版式，其余页为图片。请如实告诉用户哪几页是文字版。`
-          : visual
-            ? '视觉稿已生成，每页都是图片，用户可在「我的文档」中查看和下载。可以提醒用户：图片页的文字不可直接编辑，需要改字时用可编辑版本重出。'
-            : '文档已生成，用户可在「我的文档」中查看和下载。',
+      note: result.reusedDraft
+        ? `文档已生成并保存，正文取自本会话已有的终稿，未经模型重写。用户可在「我的文档」中查看和下载。请告诉用户这份文件是按已有正文直接排版的；如果用户要补充或修改内容，需要先说出改什么，再重新生成。`
+        : degraded
+          ? `文档已生成并保存，但页面策划${result.planStatus === 'salvaged' ? '被截断，只保留了写完整的页面' : '失败，已退回按原文机械分页'}。这是初稿，需要重新整理后再交付。请如实告诉用户这一点，不要让用户以为这是可直接评审的终稿。`
+          : partialVisual
+            ? `视觉稿已生成并保存。其中第 ${partialVisual.join('、')} 页未能绘制，这几页保留了可编辑的文字版式，其余页为图片。请如实告诉用户哪几页是文字版。`
+            : visual
+              ? '视觉稿已生成，每页都是图片，用户可在「我的文档」中查看和下载。可以提醒用户：图片页的文字不可直接编辑，需要改字时用可编辑版本重出。'
+              : '文档已生成，用户可在「我的文档」中查看和下载。',
+      ...(result.reusedDraft ? { reusedDraft: true } : {}),
       ...(degraded ? { degraded: result.planStatus } : {}),
       ...(visual ? { visual: true } : {}),
       ...(partialVisual ? { textPages: partialVisual } : {}),

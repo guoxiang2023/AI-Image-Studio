@@ -1059,6 +1059,172 @@ function normalizeTableRow(cells, width) {
   return Array.from({ length: width }, (_, index) => cells[index] || '');
 }
 
+// A turn that ends with "I will generate the Word file in the next round" is
+// evidence the assistant's message IS the finished prose, not an outline of
+// what it plans to write. The tool quota message is the strongest case: the
+// model wrote the whole document by hand because it could not call the tool.
+const FINAL_DRAFT_HINT =
+  /(额度已经用完|次数已用完|没能调用|本轮工具|下一轮.{0,6}(?:生成|调用)|下面先把|以上述正文为准|可直接排版)/;
+
+/**
+ * Returns the newest assistant message that already reads as a finished
+ * deliverable. Reusing it lets the export skip summary, planning and
+ * per-chapter generation — the whole reason a long session times out — because
+ * that prose already exists in the transcript and only needs rendering.
+ *
+ * Two independent guards keep a process note out of the file:
+ *  - structure: a real title plus at least two headings/tables, so a chat
+ *    reply *about* the document (≤400 chars, no outline) never qualifies;
+ *  - not superseded: a later assistant message that is itself a document wins,
+ *    because it is a revision. Replies that are not documents (a figure list,
+ *    an apology) do not supersede and are skipped while scanning backwards.
+ */
+export function findFinalDraft(chat) {
+  const messages = Array.isArray(chat?.messages) ? chat.messages : [];
+  let found = null;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== 'assistant') continue;
+    const text = String(message.content || '').trim();
+    if (!text) continue;
+    const { title, blocks } = parseDocumentMarkdown(text);
+    const structure = blocks.filter(
+      (block) => block.type === 'heading' || block.type === 'table',
+    ).length;
+    if (!title || structure < 2) continue;
+    // Headings plus a title are a skeleton, not a document: "# 标题 / ## 一 /
+    // ## 二" with "待补充" under each heading is an outline the model was about
+    // to fill in. Only counted body content distinguishes the two.
+    const content = draftContentChars(blocks);
+    const headings = blocks.filter((block) => block.type === 'heading').length;
+    if (
+      content < DRAFT_MIN_CONTENT ||
+      content < headings * DRAFT_MIN_CONTENT_PER_HEADING
+    ) {
+      continue;
+    }
+    if (!found) {
+      // The newest document in the transcript is the draft to export, unless a
+      // later non-document reply explicitly left it unfinished.
+      found = stripDraftPreamble(text);
+      if (!FINAL_DRAFT_HINT.test(found.slice(-1200))) break;
+      continue;
+    }
+    // An older document is only reused when it says so itself; the turns after
+    // it may have replaced it with the newer one already selected above.
+    if (FINAL_DRAFT_HINT.test(text.slice(0, 800)) || FINAL_DRAFT_HINT.test(text.slice(-800))) {
+      return stripDraftPreamble(text);
+    }
+  }
+  return found;
+}
+
+/**
+ * Drops harness/process talk from both ends of a reused draft: the "quota ran
+ * out" preamble above the title, and the closing note that explains why no file
+ * was produced. Both are true in the chat and false in the document — a saved
+ * deliverable must not tell its reader that a tool was unavailable.
+ */
+export function stripDraftPreamble(text) {
+  const source = String(text || '');
+  const firstHeading = source.search(/^#{1,3}\s+\S/m);
+  let body = source;
+  if (firstHeading > 0) {
+    const preamble = source.slice(0, firstHeading);
+    if (FINAL_DRAFT_HINT.test(preamble) || preamble.trim().length <= 200) {
+      body = source.slice(firstHeading);
+    }
+  }
+  // Trailing note: the last paragraph(s) that talk about the tool, the file or
+  // the next round. Cut at the last closing rule when the draft ends with one,
+  // otherwise drop the offending tail paragraphs only.
+  const lines = body.split('\n');
+  let end = lines.length;
+  for (let index = lines.length - 1; index >= 0 && end - index <= 40; index -= 1) {
+    const line = lines[index].trim();
+    if (!line) continue;
+    if (/^[-*_]{3,}$/.test(line)) {
+      end = index;
+      break;
+    }
+    if (FINAL_DRAFT_HINT.test(line) && line.length < 400) {
+      end = index;
+      continue;
+    }
+    break;
+  }
+  return lines.slice(0, end).join('\n').trim();
+}
+
+const ID_TOKEN_RE = /`([0-9a-f]{6,40})(?:…|\.\.\.)?`/gi;
+
+// A deliverable needs enough body text to be worth a file, and enough per
+// heading to not be a skeleton: "# 标题 / ## 一 / 待补充" has plenty of headings
+// and almost no content. Both bounds are needed — an absolute floor alone
+// rejects a legitimate one-page document, and a ratio alone divides by zero on
+// a flat document with no headings.
+const DRAFT_MIN_CONTENT = 400;
+const DRAFT_MIN_CONTENT_PER_HEADING = 80;
+
+/**
+ * Counts the words a reader would actually read: paragraphs, list items, table
+ * cells and quotes — everything except headings, which a skeleton has plenty of.
+ */
+function draftContentChars(blocks) {
+  let total = 0;
+  for (const block of blocks || []) {
+    if (block.type === 'paragraph' || block.type === 'quote') {
+      total += String(block.text || '').trim().length;
+    } else if (block.type === 'bullets') {
+      for (const item of block.items || []) total += String(item || '').trim().length;
+    } else if (block.type === 'table') {
+      for (const row of block.rows || []) {
+        for (const cell of row || []) total += String(cell || '').trim().length;
+      }
+    }
+  }
+  return total;
+}
+
+/**
+ * Re-attaches figures a reused draft refers to in prose. A model writing the
+ * body by hand quotes the diagram id shortened (`图 \`fab2f36f…\``) instead of
+ * emitting the `![caption](id)` line the parser requires, so a straight render
+ * of that draft embeds no images at all. Every quoted id prefix that matches
+ * exactly one curated image becomes a figure right below the paragraph that
+ * cites it.
+ *
+ * Only the approved final images are eligible: an unknown prefix is left as
+ * plain text, so a stale or invented id can never put a discarded revision into
+ * the deliverable.
+ */
+export function attachReferencedImages(markdown, images) {
+  const list = (Array.isArray(images) ? images : []).filter((image) => image?.id);
+  if (!list.length) return String(markdown || '');
+  const placed = new Set();
+  const lines = String(markdown || '').split('\n');
+  const out = [];
+  for (const line of lines) {
+    out.push(line);
+    if (/^\s*!\[/.test(line)) continue;
+    ID_TOKEN_RE.lastIndex = 0;
+    let match;
+    while ((match = ID_TOKEN_RE.exec(line))) {
+      const prefix = match[1].toLowerCase();
+      const matches = list.filter((image) => String(image.id).toLowerCase().startsWith(prefix));
+      if (matches.length !== 1) continue;
+      const image = matches[0];
+      if (placed.has(image.id)) continue;
+      placed.add(image.id);
+      const caption = imageCaption(image);
+      // Blank line before and after: the parser needs the figure on its own
+      // paragraph, or it would be swallowed by the surrounding text block.
+      out.push('', `![${caption}](${image.id})`, '');
+    }
+  }
+  return out.join('\n');
+}
+
 /**
  * Parses the small Markdown subset requested from the document model. Unknown
  * constructs degrade to paragraphs instead of being dropped. Markdown tables
@@ -1164,6 +1330,11 @@ export function parseDocumentMarkdown(markdown) {
 
     if (/^[-*_]{3,}$/.test(trimmed)) {
       flush();
+      // A rule separates sections of the argument, not decoration to discard:
+      // long reports rely on it to mark where one line of reasoning ends.
+      if (!blocks.length || blocks[blocks.length - 1].type !== 'hr') {
+        blocks.push({ type: 'hr' });
+      }
       continue;
     }
 

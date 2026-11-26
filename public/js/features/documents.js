@@ -145,6 +145,8 @@ function renderPreview(blocks) {
       els.documentModalBody.appendChild(list);
     } else if (block.type === 'quote') {
       els.documentModalBody.appendChild(el('blockquote', 'document-preview-quote', block.text || ''));
+    } else if (block.type === 'hr') {
+      els.documentModalBody.appendChild(el('hr', 'document-preview-rule'));
     } else if (block.type === 'table') {
       const table = el('table', 'document-preview-table');
       const head = el('thead');

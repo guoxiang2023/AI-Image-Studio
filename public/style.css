@@ -2782,6 +2782,14 @@ h5.document-preview-heading {
   color: var(--muted);
 }
 
+/* Matches the DOCX/PDF divider: a thin rule with air on both sides, so the
+   on-screen preview does not silently drop a horizontal rule the exports keep. */
+.document-preview-rule {
+  margin: 18px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
 .document-preview-image {
   margin: 4px 0;
   text-align: center;

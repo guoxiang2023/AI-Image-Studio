@@ -14,6 +14,9 @@ import {
   collectDocumentImages,
   fallbackDocumentImages,
   finalizeDocument,
+  findFinalDraft,
+  stripDraftPreamble,
+  attachReferencedImages,
   parseDocumentImagePlan,
   parseDocumentMarkdown,
   parseDocumentPlan,
@@ -612,4 +615,161 @@ test('exposes document generation as an agent tool', () => {
   assert.match(SYSTEM_PROMPT, /create_document/);
   assert.match(SYSTEM_PROMPT, /默认生成 Word/);
   assert.match(SYSTEM_PROMPT, /我的文档/);
+});
+
+// A long session whose turn ran out of tool steps contains a hand-written
+// document plus harness talk at both ends. Exporting it must reuse the prose and
+// drop the talk: this is the case that used to regenerate everything and time out.
+test('reuses a finished draft and strips harness talk from both ends', () => {
+  const body = [
+    '本轮工具调用额度已经用完，我没能调用文档生成工具。下面先把终稿正文交给你。',
+    '',
+    '# 终端运营平台演进方案',
+    '',
+    '## §0 结论',
+    '',
+    '报表性能的根因是指标口径在业务库即时计算，调 SQL 并不能解决它。跨窗去重被当成可加、时点快照被当成可累加，这两类错误与数据量无关，加机器、加索引都修不掉。方案是把口径从业务库摘出，建四层数据集，用注册表把可加性定义一次。技术改造是这条主线的前提，不是目的。',
+    '',
+    '## §0.1 风险',
+    '',
+    '可复现不等于正确。取证能证明现状如何运作，不能证明它算得对；因此每一类指标都要有独立的对账路径，分类全绿才允许切换。双跑期间出现的差异必须逐条归因到取数路径，而不是用容差覆盖过去。',
+    '',
+    '## §1 证据',
+    '',
+    '| # | 证据 | 数值 | 说明 |',
+    '|---|---|---|---|',
+    '| 1 | 报表 SQL | 115 条 | 说明列的句子明显更长，长到需要换行显示才完整 |',
+    '| 2 | 时间列被函数包裹 | 1,018 处 | 谓词非 sargable，写出即索引不可用 |',
+    '| 3 | ROWNUM 双层分页 | 7,934 处 | 需评估 OB 下深分页计划质量 |',
+    '',
+    '---',
+    '',
+    '## §2 计划',
+    '',
+    '第一期打通现金流与项目损益，第二期提升人效与交付质量，第三期建立经营决策与复用能力。每期结束都以可验证的数据为准，不以功能上线数量为准。三个期次之间保持数据集层的稳定，只允许新增指标与视图，不允许改动既有的口径定义。切换期间新旧两条链路并行，以双跑的一致性作为放行条件。',
+    '',
+    '---',
+    '',
+    '确认后我下一轮直接调用文档工具生成 Word。本轮因工具额度用尽未能产出文件，请以上述正文为准。',
+  ].join('\n');
+  const chat = {
+    title: '终端运营平台演进方案',
+    messages: [{ role: 'assistant', content: body }],
+  };
+
+  const draft = findFinalDraft(chat);
+  assert.ok(draft, 'a structured draft qualifies');
+  assert.doesNotMatch(draft, /额度已经用完|没能调用/);
+  assert.doesNotMatch(draft, /下一轮|未能产出文件/);
+  assert.match(draft, /^# 终端运营平台演进方案/);
+  assert.match(draft, /## §2 计划/);
+
+  const parsed = parseDocumentMarkdown(draft);
+  assert.equal(parsed.title, '终端运营平台演进方案');
+  assert.equal(parsed.blocks.filter((block) => block.type === 'table').length, 1);
+});
+
+test('ignores chat replies that merely talk about the document', () => {
+  const chat = {
+    messages: [
+      { role: 'assistant', content: '# 正式方案\n\n## 一\n正文\n\n## 二\n正文\n\n## 三\n正文\n' + '补充说明。'.repeat(120) },
+      { role: 'assistant', content: 'PDF 又超时了，我把图一张张列出来，文件等文档服务恢复后再补。' },
+      { role: 'assistant', content: '好的，收到。' },
+    ],
+  };
+  // The newest structured document wins even though later replies exist.
+  const draft = findFinalDraft(chat);
+  assert.ok(draft);
+  assert.match(draft, /^# 正式方案/);
+});
+
+test('does not treat a short answer or an outline as a final draft', () => {
+  assert.equal(findFinalDraft({ messages: [{ role: 'assistant', content: '已生成。' }] }), null);
+  // Many headings, almost no body: the skeleton a model emits right before it
+  // fills the chapters in. Rendering it would hand over a near-empty file.
+  const outline = ['# 终端运营平台演进方案', ''];
+  for (let index = 1; index <= 10; index += 1) {
+    outline.push(`## §${index} 章节`, '', '待补充。', '');
+  }
+  assert.equal(
+    findFinalDraft({ messages: [{ role: 'assistant', content: outline.join('\n') }] }),
+    null,
+  );
+});
+
+test('re-attaches figures cited by shortened id in a reused draft', () => {
+  const images = [
+    { id: 'fab2f36f2c4ce563a9bad0c9', caption: '指标语义层' },
+    { id: '0c6922d91d71f6618d84d8e9', caption: '弃用版本' },
+  ];
+  const markdown = ['# 标题', '', '## §3 演进四层（对应图 `fab2f36f…`）', '', '正文一段。', '', '## 末节', '', '引用不存在的 `deadbeef…` 应保持原样。'].join('\n');
+  const withImages = attachReferencedImages(markdown, images);
+  assert.match(withImages, /!\[指标语义层\]\(fab2f36f2c4ce563a9bad0c9\)/);
+  assert.doesNotMatch(withImages, /0c6922d91d71f6618d84d8e9/);
+  assert.match(withImages, /引用不存在的 `deadbeef…` 应保持原样/);
+
+  const parsed = parseDocumentMarkdown(withImages);
+  assert.equal(parsed.blocks.filter((block) => block.type === 'image').length, 1);
+  // An ambiguous prefix must not be guessed into a figure.
+  assert.equal(
+    attachReferencedImages('引用 `fab2` 前缀', [{ id: 'fab2aaaabbbbccccddddeeee' }, { id: 'fab2ffffbbbbccccddddeeee' }]).includes('!['),
+    false,
+  );
+});
+
+test('keeps a reused draft renderable with images, tables and rules intact', () => {
+  const buffer = buildDocx({
+    title: '复用终稿',
+    meta: '终稿 · 测试',
+    blocks: [
+      { type: 'heading', level: 2, text: '§1 证据' },
+      { type: 'table', headers: ['#', '证据', '数值', '说明'], rows: [['1', '报表 SQL', '115 条', '说明列的句子明显更长']] },
+      { type: 'hr' },
+      { type: 'image', data: PNG, width: 1, height: 1, caption: '图注' },
+    ],
+  });
+  const zip = openZip(buffer);
+  const document = zip.readText('word/document.xml');
+  assert.equal((document.match(/<w:tbl>/g) || []).length, 1);
+  assert.equal((document.match(/<w:drawing>/g) || []).length, 1);
+  assert.equal((document.match(/<w:pBdr>/g) || []).length, 1);
+  assert.match(document, /w:footerReference/);
+  assert.ok(zip.read('word/footer1.xml').length > 0);
+});
+
+test('strips harness talk from both ends and keeps the real closing items', () => {
+  const source = [
+    '本轮工具调用额度已经用完，我没能调用文档生成工具，所以还没有生成 docx。',
+    '',
+    '# 演进方案',
+    '',
+    '## §1 结论',
+    '',
+    '口径必须从业务库摘出。',
+    '',
+    '---',
+    '',
+    '## §7 待确认',
+    '',
+    '1. 成本口径：340 PM 还是 358 PM？',
+    '2. 里程碑：是否只报到 M4？',
+    '',
+    '---',
+    '',
+    '确认后我下一轮直接调用文档工具生成 Word。本轮因工具额度用尽未能产出文件，请以上述正文为准。',
+  ].join('\n');
+
+  const cleaned = stripDraftPreamble(source);
+  assert.match(cleaned, /^# 演进方案/, 'starts at the title, not the apology');
+  assert.doesNotMatch(cleaned, /额度已经用完|没能调用/);
+  assert.doesNotMatch(cleaned, /下一轮|未能产出文件|以上述正文为准/);
+  // The business question the reader needs must survive the cleanup.
+  assert.match(cleaned, /成本口径：340 PM 还是 358 PM/);
+  assert.match(cleaned, /里程碑：是否只报到 M4/);
+  assert.ok(cleaned.endsWith('2. 里程碑：是否只报到 M4？'));
+});
+
+test('leaves a draft without harness talk untouched', () => {
+  const source = ['# 方案', '', '## 一', '', '正文。', '', '## 二', '', '正文。'].join('\n');
+  assert.equal(stripDraftPreamble(source), source);
 });

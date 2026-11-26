@@ -145,6 +145,7 @@ npm test
 | `DOCUMENT_TIMEOUT_SECONDS` | `600` | 文档策划、分章生成与终稿编排的总超时；策划/配图失败会降级，不会因单次截断直接中止 |
 | `DOCUMENT_PDF_FONT` | 空 | PDF 中文字体路径（.ttf/.otf/.ttc）；留空自动查找系统 Noto / 冬青黑体 / 微软雅黑 |
 | `DOCUMENT_PDF_FONT_FAMILY` | 空 | 自定义 .ttc 字体集合中的 PostScript 名称，例如 `NotoSansCJKsc-Regular` |
+| `DOCUMENT_DOCX_FONT` | `Microsoft YaHei` | Word 文档的东亚字体名。OOXML 没有字体回退链，只声明一种字体名，**由打开该文件的阅读器在本机解析**，与生成服务器装了什么字体无关。默认值面向 Word/Office 环境，保持不变；若交付对象是只装了其他中文字体的阅读器环境（例如 Linux + LibreOffice），按目标环境改成该环境下存在的字体名，如 `Noto Sans CJK SC` |
 | `LLM_TIMEOUT_SECONDS` | `300` | 非流式对话请求总超时 |
 | `LLM_STREAM_IDLE_TIMEOUT_SECONDS` | `120` | 流式回复无数据时的空闲超时，收到新内容会重置 |
 | `CHAT_MAX_TOKENS` | `4096` | 单次对话请求的输出上限；超长回答会自动续写，所以这里限的是一次请求而不是整段回答 |

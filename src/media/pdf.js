@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import PDFDocument from 'pdfkit';
 import { AppError } from '../shared/errors.js';
+import { tableColumnWidths } from './table-widths.js';
 
 const PAGE_MARGIN = 56;
 const PAGE_WIDTH = 595.28;
@@ -190,18 +191,6 @@ function footer(doc, bodyFont) {
   }
 }
 
-function tableColumnWidths(headers, totalWidth) {
-  const weights = headers.map((header) => {
-    const value = String(header || '');
-    if (/说明|描述|备注|作用|内容|description|note/i.test(value)) return 3.2;
-    if (/字段|名称|表名|field|name/i.test(value)) return 1.7;
-    if (/类型|长度|必填|默认|type|length|required|default/i.test(value)) return 0.85;
-    return 1.25;
-  });
-  const sum = weights.reduce((total, value) => total + value, 0) || 1;
-  return weights.map((weight) => (totalWidth * weight) / sum);
-}
-
 function drawTable(doc, block, { bodyFont, boldFont, bottom }) {
   const headers = Array.isArray(block.headers) ? block.headers : [];
   const rows = Array.isArray(block.rows) ? block.rows : [];
@@ -210,6 +199,7 @@ function drawTable(doc, block, { bodyFont, boldFont, bottom }) {
   const columns = tableColumnWidths(
     Array.from({ length: width }, (_, index) => headers[index] || ''),
     CONTENT_WIDTH,
+    rows,
   );
   const cellPadding = 4;
   const fontSize = 8.5;
@@ -355,11 +345,19 @@ export async function buildPdf({ title, meta, blocks }) {
         .text(plainText(block.text), { width: CONTENT_WIDTH, lineGap: 2 });
       doc.moveDown(0.45);
     } else if (block.type === 'paragraph') {
+      // A two-character first-line indent, the same one the DOCX applies so
+      // both exports of one source read alike. PDFKit's `indent` applies to the
+      // first line only unless indentAllLines is set, which is exactly the
+      // Chinese paragraph convention.
       doc
         .font(bodyFont)
         .fontSize(11)
         .fillColor('#1F2937')
-        .text(plainText(block.text), { width: CONTENT_WIDTH, lineGap: 3 });
+        .text(plainText(block.text), {
+          width: CONTENT_WIDTH,
+          indent: 22,
+          lineGap: 3,
+        });
       doc.moveDown(0.6);
     } else if (block.type === 'bullets') {
       for (const [index, item] of block.items.entries()) {
@@ -400,6 +398,22 @@ export async function buildPdf({ title, meta, blocks }) {
           .restore();
       }
       doc.moveDown(0.6);
+    } else if (block.type === 'hr') {
+      // Same divider as the DOCX: a thin rule with breathing room on both
+      // sides, placed at the left margin so it spans the text column.
+      ensureSpace(26);
+      doc.moveDown(0.35);
+      const y = doc.y;
+      doc
+        .save()
+        .strokeColor('#D1D5DB')
+        .lineWidth(0.8)
+        .moveTo(PAGE_MARGIN, y)
+        .lineTo(PAGE_MARGIN + CONTENT_WIDTH, y)
+        .stroke()
+        .restore();
+      doc.y = y + 1;
+      doc.moveDown(0.55);
     } else if (block.type === 'table') {
       drawTable(doc, block, { bodyFont, boldFont, bottom });
       doc.x = PAGE_MARGIN;

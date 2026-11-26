@@ -11,6 +11,7 @@ import {
 } from '../config.js';
 import { chatCompletion } from '../ai/llm.js';
 import {
+  attachReferencedImages,
   buildDocumentBriefMessages,
   buildDocumentContextChunks,
   buildDocumentMergeMessages,
@@ -25,6 +26,7 @@ import {
   collectDocumentImages,
   fallbackDocumentImages,
   finalizeDocument,
+  findFinalDraft,
   parseDocumentImagePlan,
   parseDocumentPlan,
   sectionImageBuckets,
@@ -498,6 +500,35 @@ export async function generateSessionDocument(
     throw new AppError(400, '当前会话还没有内容');
   }
 
+  // Reuse path: when the transcript already holds a finished document, the
+  // export is pure local rendering — no model, no provider key. Placed before
+  // the API-key check on purpose: a session that already has its prose does not
+  // need a working model to produce the file, and demanding one is what forced
+  // a 68-request regeneration that ran into the timeout.
+  const draft = findFinalDraft(chat);
+  if (draft) {
+    try {
+      const { images, fileById } = await curateFinalImages(user, chat);
+      emit({ type: 'status', text: '正在排版已有终稿…' });
+      const rendered = await renderMarkdown({
+        markdown: attachReferencedImages(draft, images),
+        title: chat.title || '文档',
+        images,
+        format,
+        fileById,
+        signal,
+      });
+      return { ...rendered, reusedDraft: true };
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      // Rendering an existing draft is still local work that can fail — an
+      // unreadable image file, a font the PDF renderer cannot load. The
+      // transcript is unchanged, so the model pipeline below can still produce
+      // the file; degrading beats turning an export bug into a dead end.
+      console.warn('复用终稿排版失败，回退到模型生成:', err?.message || err);
+    }
+  }
+
   const models = loadSettings(user.id);
   if (!models.llm.apiKey) {
     throw new AppError(400, '请先在「模型设置」中配置对话模型 API Key');
@@ -700,11 +731,23 @@ export async function generateSessionDocument(
     throw new AppError(502, '文档生成失败：模型没有返回有效内容');
   }
 
-  const document = finalizeDocument({
+  return renderMarkdown({
     markdown,
     title: plan?.title || chat.title,
     images: selectedImages,
+    format,
+    fileById,
+    signal,
   });
+}
+
+/**
+ * Turns finished Markdown into the downloadable file. This is the whole export
+ * and nothing else: no model is called, which is why reusing an existing draft
+ * costs about a second instead of the minutes a full regeneration needs.
+ */
+async function renderMarkdown({ markdown, title, images, format, fileById, signal }) {
+  const document = finalizeDocument({ markdown, title, images });
 
   const rasterCache = new Map();
   for (const block of document.blocks) {
