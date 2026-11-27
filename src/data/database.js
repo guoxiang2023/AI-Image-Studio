@@ -62,6 +62,11 @@ function initializeSchema(db) {
       requests INTEGER NOT NULL DEFAULT 1,
       images INTEGER NOT NULL DEFAULT 0,
       estimated INTEGER NOT NULL DEFAULT 0,
+      stage TEXT,
+      status TEXT NOT NULL DEFAULT 'ok',
+      finish_reason TEXT,
+      elapsed_ms INTEGER NOT NULL DEFAULT 0,
+      error TEXT,
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_usage_events_user_created
@@ -165,6 +170,22 @@ function initializeSchema(db) {
       db.exec(`ALTER TABLE usage_events ADD COLUMN ${name} ${ddl}`);
     }
   }
+  // Per-call outcome metadata. Existing rows predate stage tracking; they stay
+  // readable as successful calls with an unknown stage and zero elapsed time.
+  for (const [name, ddl] of Object.entries({
+    stage: 'TEXT',
+    status: "TEXT NOT NULL DEFAULT 'ok'",
+    finish_reason: 'TEXT',
+    elapsed_ms: 'INTEGER NOT NULL DEFAULT 0',
+    error: 'TEXT',
+  })) {
+    if (!usageColumns.has(name)) {
+      db.exec(`ALTER TABLE usage_events ADD COLUMN ${name} ${ddl}`);
+    }
+  }
+  db.exec(
+    'CREATE INDEX IF NOT EXISTS idx_usage_events_turn ON usage_events(user_id, turn_id)',
+  );
 
   const galleryColumns = new Set(
     db.prepare('PRAGMA table_info(gallery_images)').all().map((row) => row.name),

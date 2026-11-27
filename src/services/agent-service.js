@@ -202,7 +202,7 @@ export async function runAgent(ctx) {
     imageMemory,
     workspaceBlock,
     history.omitted
-      ? `【上下文预算提示】有 ${history.omitted} 条较早消息未直接加载；如涉及细节，请依据摘要和图片索引，不要编造。`
+      ? `【上下文预算提示】有 ${history.omitted} 条较早消息没有加载，并且不在摘要覆盖范围内；涉及这些细节时如实说明信息已不可见，不要编造。`
       : '',
   ].filter(Boolean);
   const systemBase = memory.length ? `${SYSTEM_PROMPT}\n\n${memory.join('\n\n')}` : SYSTEM_PROMPT;
@@ -389,6 +389,9 @@ export async function runAgent(ctx) {
         content: message.content || '',
         tool_calls: calls,
       });
+      // Identifies this batch for the image tools: a repeat of the same call in
+      // a later round is the model redoing finished work, not a second picture.
+      ctx.toolRound = toolSteps;
       for (const call of calls) {
         const args = parseArgs(call.function?.arguments);
         if (!args) {

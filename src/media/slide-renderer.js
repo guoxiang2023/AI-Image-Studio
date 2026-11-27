@@ -1,3 +1,4 @@
+import sharp from 'sharp';
 import { requestImage } from '../ai/llm.js';
 import { IMAGE_TIMEOUT } from '../config.js';
 import { recognizeText } from './ocr.js';
@@ -10,6 +11,7 @@ import { withTimeout } from '../shared/utils.js';
 // which is exactly what the verification below measures.
 
 const RENDER_ATTEMPTS = 2;
+const SLIDE_IMAGE_SIZE = '1536x864';
 
 const LAYOUT_BRIEF = {
   cover: '封面页：大标题居中偏上，标题下方一行副标题或说明，留白充足，不要正文要点。',
@@ -95,7 +97,7 @@ function pageText(slide) {
 export function buildSlideImagePrompt(slide, { accent = '蓝色', style = '' } = {}) {
   const brief = LAYOUT_BRIEF[slide?.layout] || LAYOUT_BRIEF.bullets;
   return [
-    '生成一张 16:9 的中文商务汇报幻灯片，直接作为成品页面使用。',
+    '生成一张 16:9 的中文商务汇报幻灯片，设计铺满画布，直接作为成品页面使用。',
     `版式要求：${brief}`,
     '',
     '页面上必须逐字出现的文字（不得改写、不得增删、不得翻译）：',
@@ -156,50 +158,50 @@ async function renderOnePage(ctx, slide, options, { signal } = {}) {
 
   for (let attempt = 1; attempt <= RENDER_ATTEMPTS; attempt += 1) {
     if (signal?.aborted) throw new Error('已取消');
-    let data;
-    try {
-      const result = await requestImage(
-        ctx.models.image,
-        '/images/generations',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${ctx.models.image.apiKey}`,
-          },
-          body: JSON.stringify({
-            model: ctx.models.image.model,
-            prompt,
-            size: '1536x1024',
-            n: 1,
-            quality: options.quality,
-          }),
+    const { data } = await requestImage(
+      ctx.models.image,
+      '/images/generations',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${ctx.models.image.apiKey}`,
         },
-        withTimeout(signal, IMAGE_TIMEOUT),
-      );
-      data = result.data;
+        body: JSON.stringify({
+          model: ctx.models.image.model,
+          prompt,
+          size: SLIDE_IMAGE_SIZE,
+          n: 1,
+          quality: options.quality,
+        }),
+      },
+      withTimeout(signal, IMAGE_TIMEOUT),
+    );
+
+    let image;
+    try {
+      const buffer = await itemToBuffer(data[0], signal);
+      const { format, width, height } = await sharp(buffer).metadata();
+      if (!width || !height || (format !== 'png' && format !== 'jpeg')) {
+        throw new Error('视觉稿图片必须是有效的 PNG 或 JPEG');
+      }
+      image = { buffer, width, height };
     } catch (err) {
       if (signal?.aborted) throw err;
       lastProblem = err;
       continue;
     }
-
-    let buffer;
-    try {
-      buffer = await itemToBuffer(data[0], signal);
-    } catch (err) {
-      if (signal?.aborted) throw err;
-      lastProblem = err;
-      continue;
+    if (image.width * 9 !== image.height * 16) {
+      throw new Error(`视觉稿要求 16:9，图片模型返回了 ${image.width}×${image.height}`);
     }
 
     // No figures to check means nothing to verify; the page is as good as the
     // model's lettering, which the caller renders for a human to look at.
-    if (!facts.length) return { buffer, verified: true, missing: [] };
+    if (!facts.length) return { ...image, verified: true, missing: [] };
 
     let read = '';
     try {
-      const { text } = await recognizeText(buffer);
+      const { text } = await recognizeText(image.buffer);
       read = text || '';
     } catch {
       // Fail closed: an unreadable page is an unverified page. Returning the
@@ -210,7 +212,7 @@ async function renderOnePage(ctx, slide, options, { signal } = {}) {
     }
 
     const check = verifySlideText(read, facts);
-    if (check.ok) return { buffer, verified: true, missing: [] };
+    if (check.ok) return { ...image, verified: true, missing: [] };
     lastProblem = new Error(`数字与原文不一致：缺 ${check.missing.join('、')}`);
   }
 

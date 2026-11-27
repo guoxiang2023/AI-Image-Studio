@@ -413,6 +413,21 @@ export async function requestImage(imageCfg, pathname, init, signal) {
       text = await res.text();
     } catch (err) {
       if (signal?.aborted) throw err;
+      // A timeout is not a clean failure: the provider may have accepted the
+      // request and produced (and billed) the picture, so the response was lost
+      // rather than never made. Resubmitting automatically then delivers the
+      // same picture several times. Report it instead and let the caller decide.
+      const timedOut =
+        err?.name === 'TimeoutError' || err?.name === 'AbortError';
+      if (timedOut) {
+        // `uncertain` marks an outcome nobody knows: the provider may have
+        // produced and billed the picture before the response was lost.
+        const error = new Error(
+          '图片模型响应超时，无法确认是否已经出图，为避免重复生成没有自动重试',
+        );
+        error.uncertain = true;
+        throw error;
+      }
       lastError = err;
       if (attempt + 1 >= MAX_ATTEMPTS) throw networkError(err);
       await retryDelay(attempt);

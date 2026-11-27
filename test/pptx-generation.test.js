@@ -46,7 +46,7 @@ async function setup(t, handler) {
         body = null;
       }
       requests.push(body);
-      handler(res, body?.messages?.[1]?.content || '');
+      handler(res, body?.messages?.[1]?.content || '', req.url);
     });
   });
   await new Promise((resolve) => llm.listen(0, '127.0.0.1', resolve));
@@ -87,6 +87,13 @@ async function setup(t, handler) {
     temperature: 0.2,
   };
   settings.llm = { ...settings.llm, ...provider, providers: [provider], activeId: provider.id };
+  const imageProvider = {
+    ...settings.image.providers[0],
+    baseUrl: provider.baseUrl,
+    apiKey: provider.apiKey,
+    model: 'mock-image',
+  };
+  settings.image = { ...settings.image, providers: [imageProvider] };
   saveUserSettings(userId, settings);
 
   t.after(async () => {
@@ -147,6 +154,65 @@ test('create_document with pptx produces a deck, not a document', async (t) => {
   assert.equal(detail.blocks.length, 4, 'preview keeps one entry per slide');
   assert.equal(detail.blocks[0].layout, 'cover');
   assert.deepEqual(detail.blocks[2].bullets, ['绑定目录后按需读取', '凭据文件自动跳过']);
+});
+
+test('visual PPT requests 16:9 images, fills the canvas and keeps a wrong-ratio page editable', async (t) => {
+  const { default: sharp } = await import('sharp');
+  const png = await sharp({ create: { width: 153, height: 102, channels: 3, background: 'white' } })
+    .png()
+    .toBuffer();
+  const jpeg = await sharp({ create: { width: 160, height: 90, channels: 3, background: 'white' } })
+    .jpeg()
+    .toBuffer();
+  const bitmaps = [png, jpeg];
+  const plan = {
+    title: '季度复盘',
+    slides: [
+      { layout: 'cover', title: '季度复盘' },
+      { layout: 'bullets', title: '关键进展', bullets: ['文档生成'] },
+    ],
+  };
+  const { userId, chatId, requests } = await setup(t, (res, _prompt, url) => {
+    if (!url.endsWith('/images/generations')) return reply(res, JSON.stringify(plan));
+    const bitmap = bitmaps.shift();
+    res.writeHead(bitmap ? 200 : 400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ data: bitmap ? [{ b64_json: bitmap.toString('base64') }] : [] }));
+  });
+  const { runTool } = await import('../src/services/tools-service.js');
+  const { openZip } = await import('../src/media/zip-reader.js');
+  const { getUserDocument, userDocumentPath } = await import('../src/services/document-library-service.js');
+  const { readFile } = await import('node:fs/promises');
+  const result = await runTool('create_document', { format: 'pptx', visual: true }, {
+    user: { id: userId }, chat: { id: chatId }, emit() {},
+  });
+
+  assert.equal(result.error, undefined, result.error);
+  assert.deepEqual(requests.filter((body) => !body.messages).map((body) => body.size), ['1536x864', '1536x864']);
+  assert.deepEqual(result.textPages, [1]);
+  assert.match(result.note, /第 1 页.*可编辑/);
+
+  const doc = getUserDocument(userId, result.document.id);
+  const zip = openZip(await readFile(userDocumentPath(userId, doc)));
+  const editable = zip.readText('ppt/slides/slide1.xml');
+  assert.match(editable, /<a:t>季度复盘<\/a:t>/);
+  assert.doesNotMatch(editable, /<p:pic>/);
+  const visual = zip.readText('ppt/slides/slide2.xml');
+  assert.match(visual, /<p:pic>.*?<a:xfrm><a:off x="0" y="0"\/><a:ext cx="12192000" cy="6858000"\/><\/a:xfrm>/s);
+});
+
+test('a provider that rejects the widescreen size produces editable pages', async (t) => {
+  const plan = { title: '季度复盘', slides: [{ layout: 'cover', title: '季度复盘' }] };
+  const { userId, chatId, requests } = await setup(t, (res, _prompt, url) => {
+    if (!url.endsWith('/images/generations')) return reply(res, JSON.stringify(plan));
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: { message: 'unsupported size' } }));
+  });
+  const { generateSessionDocument } = await import('../src/services/document-service.js');
+  const result = await generateSessionDocument({ id: userId }, chatId, { format: 'pptx', visual: true });
+
+  assert.deepEqual(requests.filter((body) => !body.messages).map((body) => body.size), ['1536x864']);
+  assert.deepEqual(result.unrenderedPages, [1]);
+  assert.equal(result.preview[0].layout, 'cover');
 });
 
 test('a broken plan degrades to a deterministic deck instead of failing', async (t) => {
@@ -392,6 +458,27 @@ test('a salvaged deck is reported as degraded, not as a finished 终稿', async 
 
   const saved = getUserDocument(userId, result.document.id);
   assert.equal(saved.blocks.length, 2, 'the completed pages are still delivered');
+});
+
+test('a salvaged visual deck reports both the truncated plan and editable page numbers', async (t) => {
+  const slides = [
+    { layout: 'cover', title: '季度复盘' },
+    { layout: 'bullets', title: '关键进展', bullets: ['文档生成'] },
+  ];
+  const truncated = `{"title":"季度复盘","slides":[${slides.map((slide) => JSON.stringify(slide)).join(',')},{"title":"被`;
+  const { userId, chatId } = await setup(t, (res, _prompt, url) => {
+    if (!url.endsWith('/images/generations')) return reply(res, truncated, 'length');
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: { message: 'unsupported size' } }));
+  });
+  const { runTool } = await import('../src/services/tools-service.js');
+
+  const result = await runTool('create_document', { format: 'pptx', visual: true }, {
+    user: { id: userId }, chat: { id: chatId }, emit() {},
+  });
+
+  assert.match(result.note, /页面策划被截断.*初稿/);
+  assert.match(result.note, /第 1、2 页.*可编辑版式/);
 });
 
 test('a fallback deck is also flagged as degraded', async (t) => {

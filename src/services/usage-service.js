@@ -13,6 +13,21 @@ function number(value) {
   return Math.max(0, Math.round(Number(value) || 0));
 }
 
+// Outcome metadata is diagnostic, never conversational: every field is a short
+// machine-readable token. Bounding happens here so no caller can write prompt
+// or provider text into those columns through this path.
+const OUTCOME_LIMITS = Object.freeze({
+  stage: 64,
+  status: 24,
+  finishReason: 64,
+  error: 120,
+});
+
+function outcomeText(value, limit) {
+  const text = value === null || value === undefined ? '' : String(value).trim();
+  return text ? text.slice(0, limit) : null;
+}
+
 export function normalizeUsage(usage) {
   if (!usage || typeof usage !== 'object') return null;
   const promptTokens = number(usage.prompt_tokens ?? usage.input_tokens);
@@ -61,6 +76,11 @@ export function recordLlmUsage({
   completionText,
   toolCalls,
   requestCount = 1,
+  stage = null,
+  status = 'ok',
+  finishReason = null,
+  elapsedMs = 0,
+  error = null,
 }) {
   if (!userId) return;
   const actual = normalizeUsage(usage);
@@ -85,6 +105,11 @@ export function recordLlmUsage({
       requests: Math.max(1, number(requestCount)),
       images: 0,
       estimated: actual ? 0 : 1,
+      stage: outcomeText(stage, OUTCOME_LIMITS.stage),
+      status: outcomeText(status, OUTCOME_LIMITS.status) || 'ok',
+      finishReason: outcomeText(finishReason, OUTCOME_LIMITS.finishReason),
+      elapsedMs: number(elapsedMs),
+      error: outcomeText(error, OUTCOME_LIMITS.error),
       createdAt: now(),
     });
   } catch (err) {

@@ -107,7 +107,7 @@ export const DOCUMENT_BRIEF_INPUT_CHARS = Math.max(
 );
 export const DOCUMENT_BRIEF_MAX_CHARS = Math.max(
   1000,
-  Number(process.env.DOCUMENT_BRIEF_MAX_CHARS || 4000),
+  Number(process.env.DOCUMENT_BRIEF_MAX_CHARS || 11000),
 );
 export const DOCUMENT_BRIEF_MAX_TOKENS = Math.max(
   512,
@@ -117,6 +117,24 @@ export const DOCUMENT_TIMEOUT = Math.max(
   20,
   Number(process.env.DOCUMENT_TIMEOUT_SECONDS || 600),
 );
+
+// Summary and chapter deadlines scale separately with the size of each stage.
+export const DOCUMENT_CHAPTER_SECONDS = Math.max(
+  5,
+  Number(process.env.DOCUMENT_CHAPTER_SECONDS || 30),
+);
+export const DOCUMENT_TIMEOUT_MAX = Math.max(
+  DOCUMENT_TIMEOUT,
+  Number(process.env.DOCUMENT_TIMEOUT_MAX_SECONDS || 3600),
+);
+
+export function documentTimeoutSeconds({ chapters = 0, chunks = 0 } = {}) {
+  const steps = Math.max(0, Number(chapters) || 0) + Math.max(0, Number(chunks) || 0);
+  return Math.min(
+    DOCUMENT_TIMEOUT_MAX,
+    DOCUMENT_TIMEOUT + steps * DOCUMENT_CHAPTER_SECONDS,
+  );
+}
 export const DOC_ATTACHMENT_CHARS = Math.max(
   1000,
   Number(process.env.DOC_ATTACHMENT_CHARS || 12000),
@@ -161,7 +179,15 @@ export const SUMMARY_KEEP = Math.min(
   Math.max(4, Number(process.env.SUMMARY_KEEP_MESSAGES || 20)),
 );
 export const SUMMARY_INPUT_CHARS = Math.max(2000, Number(process.env.SUMMARY_INPUT_CHARS || 12000));
+// Per-turn budget: compaction runs before an answer, so a huge backlog must not
+// delay the reply. Progress accumulates across turns.
 export const SUMMARY_MAX_CALLS = Math.max(1, Number(process.env.SUMMARY_MAX_CALLS || 6));
+// Manual compaction: the user is waiting on purpose and expects the whole
+// backlog covered in one action.
+export const SUMMARY_MAX_CALLS_MANUAL = Math.max(
+  SUMMARY_MAX_CALLS,
+  Number(process.env.SUMMARY_MAX_CALLS_MANUAL || 24),
+);
 export const SUMMARY_TRIGGER_TOKENS = Math.max(
   2000,
   Number(process.env.SUMMARY_TRIGGER_TOKENS || 12000),

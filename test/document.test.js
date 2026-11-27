@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   buildDocumentImagePlanMessages,
-  buildDocumentMessages,
   buildDocumentBriefMessages,
   buildDocumentContextChunks,
   buildDocumentMergeMessages,
@@ -11,16 +10,13 @@ import {
   buildSectionTranscript,
   buildDocumentSectionMessages,
   buildTranscript,
+  applySettledCorrections,
   collectDocumentImages,
-  fallbackDocumentImages,
+  dedupeDocumentVoice,
   finalizeDocument,
-  findFinalDraft,
-  stripDraftPreamble,
-  attachReferencedImages,
   parseDocumentImagePlan,
   parseDocumentMarkdown,
   parseDocumentPlan,
-  sectionImageBuckets,
   selectFinalDocumentImages,
 } from '../src/domain/document.js';
 import { buildAnthropicRequest } from '../src/ai/anthropic.js';
@@ -237,7 +233,7 @@ test('collects unique images in order and keeps the newest when limited', () => 
 test('transcript strips generation-process chatter from assistant text', () => {
   const text = buildTranscript({
     messages: [
-      { role: 'user', content: '生成完整数据字典' },
+      { role: 'user', content: '请生成文档，保留完整数据字典' },
       {
         role: 'assistant',
         content:
@@ -246,6 +242,7 @@ test('transcript strips generation-process chatter from assistant text', () => {
     ],
   }, 40000);
   assert.doesNotMatch(text, /PDF|核心配图|逐图|评审问题清单/);
+  assert.match(text, /保留完整数据字典/);
   assert.match(text, /task_id/);
 });
 
@@ -295,9 +292,15 @@ test('falls back to a deterministic outline and bounded chapter evidence', () =>
     ],
   };
   const plan = buildFallbackDocumentPlan(chat);
-  assert.equal(plan.sections.length, 9);
-  assert.match(plan.sections[7].heading, /数据库设计/);
   assert.equal(plan.fallback, true);
+  assert.equal(plan.sections[0].heading, '总体设计概览');
+  // The design skeleton only grows the chapters the conversation covers: this
+  // dialogue has a data dictionary but no data-flow model, so it gets 数据库设计
+  // and not 数据架构, and no 部署架构 at all.
+  assert.ok(plan.sections.some((section) => /数据库设计/.test(section.heading)));
+  assert.ok(!plan.sections.some((section) => /数据架构/.test(section.heading)));
+  assert.ok(!plan.sections.some((section) => /部署架构/.test(section.heading)));
+  assert.match(plan.sections.at(-1).heading, /风险、待确认事项/);
 
   const context = buildSectionTranscript(
     chat,
@@ -307,6 +310,184 @@ test('falls back to a deterministic outline and bounded chapter evidence', () =>
   assert.match(context, /wcs_task/);
   assert.match(context, /task_id/);
   assert.ok(context.length <= 2100);
+});
+
+// A marketing brief once came back with "数据库设计" and "部署架构" chapters,
+// because every non-design document was handed the same architecture skeleton.
+test('a non-design document gets no architecture chapters', () => {
+  const chat = {
+    title: '夜跑活动宣传文案',
+    messages: [
+      { role: 'user', content: '帮我写一段夜跑活动的宣传文案，投放在小红书。' },
+      { role: 'assistant', content: '夜色正好，一起跑起来。' },
+      { role: 'user', content: '再活泼一点，加一句报名方式。' },
+    ],
+  };
+  const plan = buildFallbackDocumentPlan(chat);
+  assert.deepEqual(
+    plan.sections.map((section) => section.heading),
+    ['背景与目标', '主要内容', '结论与下一步'],
+  );
+  assert.doesNotMatch(
+    plan.sections.map((section) => section.heading).join(' '),
+    /架构|数据库|部署|数据字典/,
+  );
+});
+
+// A design without a database or a deployment section must not invent those
+// chapters; the user's own words decide which review chapters exist.
+test('a design outline only covers the topics the dialogue has', () => {
+  const chat = {
+    title: '仓储调度系统设计',
+    messages: [
+      { role: 'user', content: '我们要设计一个仓储调度系统的总体架构。' },
+      {
+        role: 'assistant',
+        content: '系统分为接入层、调度层、驱动层，技术选型用 Node.js 和 Redis。',
+      },
+      { role: 'user', content: '部署在两个机房，做双活。' },
+    ],
+  };
+  const headings = buildFallbackDocumentPlan(chat).sections.map(
+    (section) => section.heading,
+  );
+  assert.ok(headings.includes('部署架构与高可用设计'));
+  assert.ok(!headings.some((heading) => /数据库设计/.test(heading)));
+});
+
+test('keeps the headings the user wrote for a general document', () => {
+  const chat = {
+    title: '活动复盘',
+    messages: [
+      {
+        role: 'user',
+        content: ['大纲：', '1. 活动目标达成', '2. 现场执行问题', '3. 下次改进'].join('\n'),
+      },
+      { role: 'assistant', content: '收到，我按这个大纲整理。' },
+    ],
+  };
+  const headings = buildFallbackDocumentPlan(chat).sections.map(
+    (section) => section.heading,
+  );
+  assert.deepEqual(headings, ['活动目标达成', '现场执行问题', '下次改进']);
+});
+
+test('chapter evidence includes attachments, latest corrections, and later field rows', () => {
+  // An attachment-only turn is the source for a document pasted as a file.
+  const attachmentChat = {
+    messages: [
+      {
+        role: 'user',
+        content: '',
+        attachments: [
+          {
+            id: 'a1',
+            name: '库存锁定.docx',
+            text: 'stock_lock_id 表示锁定流水号，lock_time 表示锁定时间。',
+          },
+        ],
+      },
+      { role: 'assistant', content: '收到，已解析附件。' },
+      { role: 'user', content: '按附件写。' },
+    ],
+  };
+  const attached = buildSectionTranscript(
+    attachmentChat,
+    { heading: '库存锁定' },
+    4000,
+  );
+  assert.match(attached, /stock_lock_id/);
+
+  // A later turn carrying the full field inventory must not lose to an earlier,
+  // shorter excerpt — that is how a "complete data dictionary" chapter ended up
+  // documenting three of thirty fields.
+  const rows = Array.from({ length: 30 }, (_, index) => `| f${index} | varchar |`);
+  const fieldChat = {
+    messages: [
+      {
+        role: 'assistant',
+        content: `第一版字段：\n| 字段 | 类型 |\n|---|---|\n| a | int |`,
+      },
+      { role: 'user', content: '不是这样，字段应该是 zone_code。' },
+      {
+        role: 'assistant',
+        content: `完整字段：\n| 字段 | 类型 |\n|---|---|\n${rows.join('\n')}`,
+      },
+    ],
+  };
+  const evidence = buildSectionTranscript(
+    fieldChat,
+    { heading: '数据库设计', points: ['zone_code'] },
+    3000,
+  );
+  assert.match(evidence, /\| f29 \|/, 'the newest field rows survive');
+  assert.match(evidence, /zone_code/, 'the user correction is forced in');
+});
+
+test('a chapter can cite a contract clause from the middle of a long attachment', () => {
+  const clause = '附件 C 约定验收后的付款期为 45 天。';
+  const chat = { messages: [{ role: 'user', attachments: [{ name: '合同.txt',
+    text: `${'通用说明。'.repeat(5000)}${clause}${'日常记录。'.repeat(5000)}`,
+  }] }] };
+  const context = buildSectionTranscript(chat, { heading: '付款期与验收' }, 4000);
+  assert.ok(context.includes(clause));
+  assert.ok(context.length <= 4000);
+});
+
+test('a chapter keeps a user correction and an older relevant table', () => {
+  const chat = {
+    messages: [
+      {
+        role: 'assistant',
+        content: `早期方案：采用两条入库一条出库的非对称配置。\n${'补充说明。'.repeat(200)}`,
+      },
+      {
+        role: 'assistant',
+        content: `线路配置：\n| 字段 | 类型 |\n|---|---|\n| line_id | varchar |`,
+      },
+      { role: 'user', content: '不是这样，所有线路都是出入库复用的。' },
+      { role: 'assistant', content: '明白了。' },
+    ],
+  };
+  const evidence = buildSectionTranscript(
+    chat,
+    { heading: '线路配置' },
+    1200,
+  );
+  assert.match(evidence, /所有线路都是出入库复用的/);
+  assert.match(evidence, /line_id/, 'structured rows stay even before the correction');
+});
+
+test('an older topic decision stays in chapter evidence ahead of large unrelated tables', () => {
+  const confirmed = 'OLAP 方案确定了使用 Doris 作为替代方案。';
+  const rows = '| 订单编号 | 客户姓名 |\n'.repeat(300);
+  const chat = { messages: [
+    { role: 'user', content: confirmed },
+    { role: 'assistant', content: 'OLAP 选型暂未决定。' },
+    { role: 'assistant', content: rows },
+    { role: 'user', content: '把封面改为灰色。' },
+    { role: 'user', content: '开工。' },
+  ] };
+  const evidence = buildSectionTranscript(chat, { heading: '报表选型', points: ['OLAP'] }, 4000);
+  assert.ok(evidence.includes(confirmed));
+  assert.doesNotMatch(evidence, /客户姓名/);
+});
+
+test('chapter evidence preserves user-stated pain points and skips prior export troubleshooting sections', () => {
+  const pain = '技术栈老旧，17 个工程存在重复建设。';
+  const workflowRow = '| 痛点与报表性能 | reusedDraft=true |';
+  const chat = { messages: [
+    { role: 'user', content: pain },
+    { role: 'assistant', content: `## 仍然失败，而且结果与上次一致\n${`${workflowRow}\n`.repeat(100)}\n## 现状基线\n交易与报表共库造成资源争用。` },
+    { role: 'user', content: '现状痛点与性能根因还要展开。' },
+    { role: 'user', content: '报表性能根因写细些。' },
+    { role: 'user', content: '只使用当前会话里的图。' },
+    { role: 'user', content: '文档里面痛点没有写出来。' },
+  ] };
+  const evidence = buildSectionTranscript(chat, { heading: '现状痛点与性能根因', points: ['技术栈老旧', '报表性能'] }, 4000);
+  assert.ok(evidence.includes(pain));
+  assert.match(evidence, /交易与报表共库造成资源争用/);
+  assert.doesNotMatch(evidence, /reusedDraft|结果与上次一致/);
 });
 
 test('chunks the whole conversation for semantic summarization', () => {
@@ -324,21 +505,51 @@ test('chunks the whole conversation for semantic summarization', () => {
   assert.match(chunks.at(-1), /最新需求/);
   const messages = buildDocumentBriefMessages({ chunk: chunks[0] });
   assert.match(messages[1].content, /事实摘要/);
-  assert.match(messages[1].content, /【数据与数据库】/);
+  assert.match(messages[1].content, /摘要控制在 3000 字以内/, 'default budget');
+  const bounded = buildDocumentBriefMessages({ chunk: chunks[0], maxChars: 1500 });
+  assert.match(bounded[1].content, /摘要控制在 1500 字以内/);
   const merge = buildDocumentMergeMessages({ summaries: ['片段一', '片段二'] });
   assert.match(merge[1].content, /必须覆盖所有片段/);
+  assert.match(merge[1].content, /输出 3000 字以内/);
+  const boundedMerge = buildDocumentMergeMessages({
+    summaries: ['片段一', '片段二'],
+    maxChars: 1200,
+  });
+  assert.match(boundedMerge[1].content, /输出 1200 字以内/);
+  assert.match(boundedMerge[1].content, /片段 2/);
 });
 
-test('keeps forced user turns inside the section context budget', () => {
+test('summary chunks cover attachment interiors, later files and image-only replies', () => {
   const chat = {
     messages: [
-      { role: 'user', content: '早期需求'.repeat(3000) },
-      { role: 'user', content: '最新需求'.repeat(3000) },
+      { role: 'user', attachments: [
+        { name: '需求.docx', text: `${'前期记录'.repeat(500)}锁定流程说明${'后期记录'.repeat(500)}` },
+        ...['乙', '丙', '丁', '戊'].map((name) => ({ name, text: `资料${name}的决定` })),
+      ] },
+      { role: 'assistant', images: [{ id: ID_A, caption: '仓库布局定稿' }] },
     ],
   };
-  const context = buildSectionTranscript(chat, { heading: '背景与目标' }, 2000);
-  assert.ok(context.length <= 2100);
-  assert.match(context, /最新需求/);
+  const chunks = buildDocumentContextChunks(chat, 2000);
+  assert.ok(chunks.every((chunk) => chunk.length <= 2000));
+  const all = chunks.join('');
+  for (const fact of ['需求.docx', '锁定流程说明', '资料戊的决定', '仓库布局定稿', ID_A]) {
+    assert.ok(all.includes(fact), fact);
+  }
+});
+
+test('oversized recent instructions leave room for older chapter evidence at both context sizes', () => {
+  const chat = { messages: [
+    { role: 'assistant', content: '签收字段 receipt_id 为仓库流水号，签收前必须核对。' },
+    { role: 'user', content: `按门店排列。${'交接背景。'.repeat(1800)}` },
+    { role: 'user', content: `${'运营说明。'.repeat(1800)}末尾写签收人。` },
+  ] };
+  for (const budget of [16000, 4000]) {
+    const context = buildSectionTranscript(chat, { heading: '签收字段', points: ['receipt_id'] }, budget);
+    assert.match(context, /receipt_id 为仓库流水号/);
+    assert.match(context, /按门店排列/);
+    assert.match(context, /末尾写签收人/);
+    assert.ok(context.length <= budget);
+  }
 });
 
 test('plans final structure and keeps only valid final images', () => {
@@ -356,8 +567,11 @@ test('plans final structure and keeps only valid final images', () => {
     ['system', 'user'],
   );
   assert.match(planMessages[1].content, /只输出一个 JSON 对象/);
-  assert.match(planMessages[1].content, /7–10 个章节/);
   assert.match(planMessages[1].content, /完整数据字典/);
+  // The architecture skeleton is offered as material-driven examples, never as
+  // a mandatory outline for every document.
+  assert.match(planMessages[1].content, /只保留对话已展开的部分/);
+  assert.match(planMessages[1].content, /禁止出现“系统架构”/);
 
   const imageMessages = buildDocumentImagePlanMessages({
     chat: { title: '夜跑海报评审' },
@@ -379,7 +593,6 @@ test('plans final structure and keeps only valid final images', () => {
     ],
     plan: { title: '夜跑海报评审', sections: [{ heading: '技术架构' }] },
   });
-  assert.match(imageMessages[1].content, /只选最后生成、最新的一版/);
   assert.match(imageMessages[1].content, /具体技术实现没有/);
 
   const plan = parseDocumentPlan(
@@ -435,9 +648,6 @@ test('keeps more than twelve final images and honors the caller limit', () => {
   );
   assert.equal(defaulted.length, 20);
 
-  const fallback = fallbackDocumentImages(images, [{ heading: '背景' }], 15);
-  assert.equal(fallback.length, 15);
-
   const prompt = buildDocumentImagePlanMessages({
     chat: { title: '图数上限' },
     images,
@@ -445,46 +655,6 @@ test('keeps more than twelve final images and honors the caller limit', () => {
     limit: 30,
   });
   assert.match(prompt[1].content, /最多选 30 张/);
-});
-
-test('spreads images across chapters so none is silently dropped', () => {
-  const ids = Array.from({ length: 24 }, (_, index) =>
-    index.toString(16).padStart(24, '0'),
-  );
-  const images = ids.map((id) => ({ id, section: 1 }));
-  const sections = Array.from({ length: 7 }, (_, index) => ({ heading: `章 ${index + 1}` }));
-
-  // 24 images on 7 chapters is the default worst case: quota must grow past 3.
-  const wide = sectionImageBuckets({ images }, sections);
-  assert.deepEqual(wide.dropped, []);
-  assert.equal(wide.buckets.flat().length, 24);
-  assert.equal(wide.perChapter, 4);
-  assert.ok(
-    wide.buckets.every((bucket) => bucket.length <= wide.perChapter),
-    '每章引用数不能超过章节提示词的配额',
-  );
-
-  const tenChapters = sectionImageBuckets(
-    { images },
-    Array.from({ length: 10 }, (_, index) => ({ heading: `章 ${index + 1}` })),
-  );
-  assert.deepEqual(tenChapters.dropped, []);
-  assert.equal(tenChapters.buckets.flat().length, 24);
-
-  // An explicit smaller quota is the only way images get reported as dropped.
-  const capped = sectionImageBuckets({ images }, sections, 3);
-  assert.equal(capped.buckets.flat().length, 21);
-  assert.equal(capped.dropped.length, 3);
-
-  const emptySections = sectionImageBuckets({ images }, []);
-  assert.deepEqual(emptySections.buckets, []);
-  assert.equal(emptySections.dropped.length, 24);
-
-  const unknownSection = sectionImageBuckets(
-    { images: [{ id: ids[0], section: 99 }] },
-    [{ heading: '章 1' }, { heading: '章 2' }],
-  );
-  assert.equal(unknownSection.buckets[0].length, 1);
 });
 
 test('chapter prompt cites as many images as its bucket holds', () => {
@@ -500,14 +670,116 @@ test('chapter prompt cites as many images as its bucket holds', () => {
     total: 1,
     images,
     transcript: '',
-    imageQuota: 4,
   });
   assert.match(messages[1].content, /最多引用 4 张/);
 });
 
-test('document request keeps a user turn for Anthropic Messages', () => {
-  const messages = buildDocumentMessages({
+test('a design chapter gets the review rules it needs and nothing else', () => {
+  const plan = {
+    title: 'WCS 概要设计',
+    documentType: '方案设计',
+    sections: [
+      { heading: '总体设计概览' },
+      { heading: '数据库设计（含完整数据字典）' },
+      { heading: '背景与目标' },
+      { heading: '风险、待确认事项与评审结论' },
+    ],
+  };
+  const overview = buildDocumentSectionMessages({
+    chat: {},
+    plan,
+    section: { heading: '总体设计概览' },
+    index: 0,
+    total: 4,
+    images: [],
+    transcript: '用户：先做架构图。',
+  });
+  // The overview table is a design artefact and only the first chapter may use it.
+  assert.match(overview[1].content, /设计领域 \| 关键结论\/决策/);
+  assert.doesNotMatch(overview[1].content, /本章涉及数据库/);
+  // A non-closing chapter must not open its own pending section; the closing one
+  // is where that list belongs.
+  assert.match(overview[1].content, /本章不要生成任何标题包含/);
+
+  const database = buildDocumentSectionMessages({
+    chat: {},
+    plan,
+    section: {
+      heading: '数据库设计（含完整数据字典）',
+      purpose: '给出完整数据字典',
+      points: ['wcs_task 表', 'zone_code 字段'],
+    },
+    index: 1,
+    total: 4,
+    images: [],
+    transcript: '用户：wcs_task 表有 zone_code。',
+  });
+  assert.match(database[1].content, /本章涉及数据库、数据字典/);
+  assert.match(database[1].content, /本章写作重点：给出完整数据字典/);
+  assert.match(database[1].content, /- wcs_task 表/);
+  // Pending items belong to the closing chapter only.
+  assert.doesNotMatch(database[1].content, /需要评审确认的事项/);
+  // The chapter is written from its own evidence, not from a whole-document brief.
+  assert.match(database[1].content, /【本章相关对话证据】/);
+  assert.doesNotMatch(database[1].content, /【全篇事实摘要】/);
+});
+
+test('a non-design chapter is not told to produce architecture or a data dictionary', () => {
+  const plan = {
+    title: '夜跑活动宣传文案',
+    documentType: '交付文档',
+    sections: [
+      { heading: '背景与目标' },
+      { heading: '主要内容' },
+      { heading: '结论与下一步' },
+    ],
+    openIssues: ['报名链接待定'],
+  };
+  const messages = buildDocumentSectionMessages({
+    chat: {},
+    plan,
+    section: { heading: '主要内容', purpose: '给出三段文案' },
+    index: 1,
+    total: 3,
+    images: [],
+    transcript: '用户：写三段文案。',
+  });
+  const content = messages[1].content;
+  assert.doesNotMatch(content, /本章涉及数据库、数据字典/);
+  assert.doesNotMatch(content, /本章涉及架构或技术选型/);
+  assert.doesNotMatch(content, /设计领域 \| 关键结论\/决策/);
+  assert.match(content, /本章写作重点：给出三段文案/);
+  assert.doesNotMatch(
+    messages[0].content,
+    /解决方案架构师/,
+    'the persona follows the document type',
+  );
+
+  const closing = buildDocumentSectionMessages({
+    chat: {},
+    plan,
+    section: { heading: '结论与下一步' },
+    index: 2,
+    total: 3,
+    images: [],
+    transcript: '用户：写三段文案。',
+  });
+  assert.match(closing[1].content, /报名链接待定/, 'pending items land in the closing chapter');
+  assert.match(closing[1].content, /待评审|待确认/);
+});
+
+test('chapter request keeps a user turn for Anthropic Messages', () => {
+  const plan = {
+    title: '夜跑海报',
+    documentType: '交付文档',
+    sections: [{ heading: '主视觉方案' }, { heading: '结论与下一步' }],
+  };
+  const messages = buildDocumentSectionMessages({
     chat: { title: '夜跑海报' },
+    plan,
+    section: { heading: '主视觉方案', purpose: '确认最终主视觉' },
+    index: 0,
+    total: 2,
     images: [
       {
         id: ID_A,
@@ -526,9 +798,7 @@ test('document request keeps a user turn for Anthropic Messages', () => {
   );
   assert.match(messages[1].content, new RegExp(`image_id=${ID_A}`));
   assert.match(messages[1].content, /做一张夜跑海报/);
-  assert.match(messages[1].content, /只写终稿/);
-  assert.match(messages[1].content, /过程稿/);
-  assert.match(messages[1].content, /每个结论都能在前文找到依据/);
+  assert.match(messages[1].content, /本章写作重点：确认最终主视觉/);
 
   const request = buildAnthropicRequest(
     { baseUrl: 'https://api.anthropic.com', model: 'claude-test', apiKey: 'secret' },
@@ -617,159 +887,217 @@ test('exposes document generation as an agent tool', () => {
   assert.match(SYSTEM_PROMPT, /我的文档/);
 });
 
-// A long session whose turn ran out of tool steps contains a hand-written
-// document plus harness talk at both ends. Exporting it must reuse the prose and
-// drop the talk: this is the case that used to regenerate everything and time out.
-test('reuses a finished draft and strips harness talk from both ends', () => {
-  const body = [
-    '本轮工具调用额度已经用完，我没能调用文档生成工具。下面先把终稿正文交给你。',
-    '',
-    '# 终端运营平台演进方案',
-    '',
-    '## §0 结论',
-    '',
-    '报表性能的根因是指标口径在业务库即时计算，调 SQL 并不能解决它。跨窗去重被当成可加、时点快照被当成可累加，这两类错误与数据量无关，加机器、加索引都修不掉。方案是把口径从业务库摘出，建四层数据集，用注册表把可加性定义一次。技术改造是这条主线的前提，不是目的。',
-    '',
-    '## §0.1 风险',
-    '',
-    '可复现不等于正确。取证能证明现状如何运作，不能证明它算得对；因此每一类指标都要有独立的对账路径，分类全绿才允许切换。双跑期间出现的差异必须逐条归因到取数路径，而不是用容差覆盖过去。',
-    '',
-    '## §1 证据',
-    '',
-    '| # | 证据 | 数值 | 说明 |',
-    '|---|---|---|---|',
-    '| 1 | 报表 SQL | 115 条 | 说明列的句子明显更长，长到需要换行显示才完整 |',
-    '| 2 | 时间列被函数包裹 | 1,018 处 | 谓词非 sargable，写出即索引不可用 |',
-    '| 3 | ROWNUM 双层分页 | 7,934 处 | 需评估 OB 下深分页计划质量 |',
-    '',
-    '---',
-    '',
-    '## §2 计划',
-    '',
-    '第一期打通现金流与项目损益，第二期提升人效与交付质量，第三期建立经营决策与复用能力。每期结束都以可验证的数据为准，不以功能上线数量为准。三个期次之间保持数据集层的稳定，只允许新增指标与视图，不允许改动既有的口径定义。切换期间新旧两条链路并行，以双跑的一致性作为放行条件。',
-    '',
-    '---',
-    '',
-    '确认后我下一轮直接调用文档工具生成 Word。本轮因工具额度用尽未能产出文件，请以上述正文为准。',
-  ].join('\n');
-  const chat = {
-    title: '终端运营平台演进方案',
-    messages: [{ role: 'assistant', content: body }],
-  };
 
-  const draft = findFinalDraft(chat);
-  assert.ok(draft, 'a structured draft qualifies');
-  assert.doesNotMatch(draft, /额度已经用完|没能调用/);
-  assert.doesNotMatch(draft, /下一轮|未能产出文件/);
-  assert.match(draft, /^# 终端运营平台演进方案/);
-  assert.match(draft, /## §2 计划/);
 
-  const parsed = parseDocumentMarkdown(draft);
-  assert.equal(parsed.title, '终端运营平台演进方案');
-  assert.equal(parsed.blocks.filter((block) => block.type === 'table').length, 1);
-});
-
-test('ignores chat replies that merely talk about the document', () => {
-  const chat = {
-    messages: [
-      { role: 'assistant', content: '# 正式方案\n\n## 一\n正文\n\n## 二\n正文\n\n## 三\n正文\n' + '补充说明。'.repeat(120) },
-      { role: 'assistant', content: 'PDF 又超时了，我把图一张张列出来，文件等文档服务恢复后再补。' },
-      { role: 'assistant', content: '好的，收到。' },
-    ],
-  };
-  // The newest structured document wins even though later replies exist.
-  const draft = findFinalDraft(chat);
-  assert.ok(draft);
-  assert.match(draft, /^# 正式方案/);
-});
-
-test('does not treat a short answer or an outline as a final draft', () => {
-  assert.equal(findFinalDraft({ messages: [{ role: 'assistant', content: '已生成。' }] }), null);
-  // Many headings, almost no body: the skeleton a model emits right before it
-  // fills the chapters in. Rendering it would hand over a near-empty file.
-  const outline = ['# 终端运营平台演进方案', ''];
-  for (let index = 1; index <= 10; index += 1) {
-    outline.push(`## §${index} 章节`, '', '待补充。', '');
-  }
-  assert.equal(
-    findFinalDraft({ messages: [{ role: 'assistant', content: outline.join('\n') }] }),
-    null,
-  );
-});
-
-test('re-attaches figures cited by shortened id in a reused draft', () => {
-  const images = [
-    { id: 'fab2f36f2c4ce563a9bad0c9', caption: '指标语义层' },
-    { id: '0c6922d91d71f6618d84d8e9', caption: '弃用版本' },
-  ];
-  const markdown = ['# 标题', '', '## §3 演进四层（对应图 `fab2f36f…`）', '', '正文一段。', '', '## 末节', '', '引用不存在的 `deadbeef…` 应保持原样。'].join('\n');
-  const withImages = attachReferencedImages(markdown, images);
-  assert.match(withImages, /!\[指标语义层\]\(fab2f36f2c4ce563a9bad0c9\)/);
-  assert.doesNotMatch(withImages, /0c6922d91d71f6618d84d8e9/);
-  assert.match(withImages, /引用不存在的 `deadbeef…` 应保持原样/);
-
-  const parsed = parseDocumentMarkdown(withImages);
-  assert.equal(parsed.blocks.filter((block) => block.type === 'image').length, 1);
-  // An ambiguous prefix must not be guessed into a figure.
-  assert.equal(
-    attachReferencedImages('引用 `fab2` 前缀', [{ id: 'fab2aaaabbbbccccddddeeee' }, { id: 'fab2ffffbbbbccccddddeeee' }]).includes('!['),
-    false,
-  );
-});
-
-test('keeps a reused draft renderable with images, tables and rules intact', () => {
-  const buffer = buildDocx({
-    title: '复用终稿',
-    meta: '终稿 · 测试',
-    blocks: [
-      { type: 'heading', level: 2, text: '§1 证据' },
-      { type: 'table', headers: ['#', '证据', '数值', '说明'], rows: [['1', '报表 SQL', '115 条', '说明列的句子明显更长']] },
-      { type: 'hr' },
-      { type: 'image', data: PNG, width: 1, height: 1, caption: '图注' },
-    ],
-  });
-  const zip = openZip(buffer);
-  const document = zip.readText('word/document.xml');
-  assert.equal((document.match(/<w:tbl>/g) || []).length, 1);
-  assert.equal((document.match(/<w:drawing>/g) || []).length, 1);
-  assert.equal((document.match(/<w:pBdr>/g) || []).length, 1);
-  assert.match(document, /w:footerReference/);
-  assert.ok(zip.read('word/footer1.xml').length > 0);
-});
-
-test('strips harness talk from both ends and keeps the real closing items', () => {
+test('moves per-chapter pending items into the closing chapter instead of dropping them', () => {
   const source = [
-    '本轮工具调用额度已经用完，我没能调用文档生成工具，所以还没有生成 docx。',
+    '# 方案',
     '',
-    '# 演进方案',
+    '## 1 总体设计',
     '',
-    '## §1 结论',
+    '本章描述系统的分层与边界，共分为四层结构。系统按四层划分，接入层负责协议适配，核心层负责调度。',
     '',
-    '口径必须从业务库摘出。',
+    '### 1.1 本章待定项',
     '',
-    '---',
+    '设备清单尚未确认。',
     '',
-    '## §7 待确认',
+    '## 2 技术架构',
     '',
-    '1. 成本口径：340 PM 还是 358 PM？',
-    '2. 里程碑：是否只报到 M4？',
+    '### 2.1 部署相关待定项',
     '',
-    '---',
+    '机房数量待定。',
     '',
-    '确认后我下一轮直接调用文档工具生成 Word。本轮因工具额度用尽未能产出文件，请以上述正文为准。',
+    '## 3 风险与待确认事项',
+    '',
+    '### 3.1 待确认事项',
+    '',
+    '| 编号 | 事项 |',
+    '|---|---|',
+    '| C-01 | 仓库类型 |',
   ].join('\n');
-
-  const cleaned = stripDraftPreamble(source);
-  assert.match(cleaned, /^# 演进方案/, 'starts at the title, not the apology');
-  assert.doesNotMatch(cleaned, /额度已经用完|没能调用/);
-  assert.doesNotMatch(cleaned, /下一轮|未能产出文件|以上述正文为准/);
-  // The business question the reader needs must survive the cleanup.
-  assert.match(cleaned, /成本口径：340 PM 还是 358 PM/);
-  assert.match(cleaned, /里程碑：是否只报到 M4/);
-  assert.ok(cleaned.endsWith('2. 里程碑：是否只报到 M4？'));
+  const cleaned = dedupeDocumentVoice(source);
+  // The narration goes; the facts next to it stay.
+  assert.doesNotMatch(cleaned, /本章描述系统的分层/);
+  assert.match(cleaned, /接入层负责协议适配/, 'the factual sentence next to the narration stays');
+  // A chapter's own pending list is not a chapter in the file any more...
+  assert.doesNotMatch(cleaned, /### 1\.1 本章待定项/);
+  assert.doesNotMatch(cleaned, /### 2\.1 部署相关待定项/);
+  // ...but every item it held survives, exactly once, in the closing chapter.
+  assert.equal(cleaned.match(/设备清单尚未确认。/g).length, 1, 'carried once');
+  assert.equal(cleaned.match(/机房数量待定。/g).length, 1, 'carried once');
+  assert.match(cleaned, /### 3\.1 待确认事项/, 'the closing chapter keeps its own list');
+  assert.match(cleaned, /C-01/);
+  // Carried items land inside the closing chapter, after its heading.
+  const closing = cleaned.slice(cleaned.indexOf('## 3 风险与待确认事项'));
+  assert.match(closing, /设备清单尚未确认。/);
+  assert.match(closing, /机房数量待定。/);
 });
 
-test('leaves a draft without harness talk untouched', () => {
-  const source = ['# 方案', '', '## 一', '', '正文。', '', '## 二', '', '正文。'].join('\n');
-  assert.equal(stripDraftPreamble(source), source);
+test('adds a consolidated list when the document has no closing chapter', () => {
+  const source = [
+    '# 方案',
+    '',
+    '## 1 总体设计',
+    '',
+    '系统按四层划分，接入层负责协议适配，核心层负责调度。',
+    '',
+    '### 1.1 本章待定项',
+    '',
+    '设备清单尚未确认。',
+    '',
+    '## 2 技术架构',
+    '',
+    '系统按四层划分，接入层负责协议适配，核心层负责调度。',
+  ].join('\n');
+  const cleaned = dedupeDocumentVoice(source);
+  assert.match(cleaned, /待确认事项（汇总）/);
+  assert.equal(cleaned.match(/设备清单尚未确认。/g).length, 1);
 });
+
+test('keeps a fact that happens to start with 本章', () => {
+  const source = [
+    '# 方案',
+    '',
+    '## 2 边界',
+    '',
+    '本章涉及的仓库类型与设备清单尚未最终确认，功能清单需据此裁剪。',
+  ].join('\n');
+  assert.match(dedupeDocumentVoice(source), /本章涉及的仓库类型/);
+});
+
+// A per-chapter pending list is often a table (issue register, open fields).
+// Blanking its rows lost the structured evidence, so the table moves to the
+// closing chapter as a table instead of being flattened or dropped.
+test('carries a pending table into the closing chapter as a table', () => {
+  const source = [
+    '# 方案',
+    '',
+    '## 1 总体设计',
+    '',
+    '系统按四层划分，接入层负责协议适配，核心层负责调度。',
+    '',
+    '### 1.1 本章待定项',
+    '',
+    '| 编号 | 事项 |',
+    '|---|---|',
+    '| C-01 | 仓库类型 |',
+    '| C-02 | 设备型号 |',
+    '',
+    '## 2 风险与待确认事项',
+    '',
+    '### 2.1 待确认事项',
+    '',
+    '| 编号 | 事项 |',
+    '|---|---|',
+    '| C-09 | 现场网络 |',
+  ].join('\n');
+  const cleaned = dedupeDocumentVoice(source);
+  assert.doesNotMatch(cleaned, /### 1\.1 本章待定项/);
+  // Every row survives exactly once, and the carried rows stay a table.
+  for (const id of ['C-01', 'C-02', 'C-09']) {
+    assert.equal(cleaned.match(new RegExp(id, 'g')).length, 1, `${id} carried once`);
+  }
+  const closing = cleaned.slice(cleaned.indexOf('## 2 风险与待确认事项'));
+  // Same header: the rows join the closing chapter's table instead of forming
+  // a second one with an identical header.
+  const tables = parseDocumentMarkdown(cleaned).blocks.filter(
+    (block) => block.type === 'table',
+  );
+  assert.equal(tables.length, 1);
+  assert.deepEqual(
+    tables[0].rows.map((row) => row[0]),
+    ['C-09', 'C-01', 'C-02'],
+  );
+  assert.match(closing, /^\| C-01 \| 仓库类型 \|$/m);
+  assert.match(closing, /^\| C-02 \| 设备型号 \|$/m);
+  // The closing chapter's own table is untouched.
+  assert.match(closing, /^\| C-09 \| 现场网络 \|$/m);
+});
+
+// `↔` has no glyph in the CJK fonts the PDF renderer resolves, so it came out
+// as a tofu box in the interface table ("I-06 | WCS � PLC"). The export must
+// stay readable, so the unsupported glyph degrades to the two arrows the font
+// does have.
+test('renders a bidirectional arrow instead of a missing glyph', async (t) => {
+  let buffer;
+  try {
+    buffer = await buildPdf({
+      title: '箭头',
+      meta: '',
+      blocks: [
+        { type: 'paragraph', text: '链路 A ↔ B 双向。' },
+        {
+          type: 'table',
+          headers: ['编号', '方向'],
+          rows: [['I-06', 'WCS ↔ PLC']],
+        },
+      ],
+    });
+  } catch (error) {
+    if (error?.status === 500 && /中文字体/.test(error.message)) {
+      t.skip('主机没有可用的中文字体');
+      return;
+    }
+    throw error;
+  }
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const pdf = await pdfjs.getDocument({
+    data: new Uint8Array(buffer),
+    useWorkerFetch: false,
+    isEvalSupported: false,
+  }).promise;
+  const page = await pdf.getPage(1);
+  const content = await page.getTextContent();
+  const text = content.items.map((item) => item.str).join('');
+  assert.doesNotMatch(text, /\uFFFD/, 'no replacement characters may reach the page');
+  assert.match(text, /A ←→ B/);
+  assert.match(text, /WCS ←→ PLC/);
+});
+
+// A regeneration must not re-open a question the user already answered. The
+// assistant had offered "两条入库、一条出库" as a hypothetical, the user replied
+// "所有的线路都是出入库复用的", and the next export still listed the rejected
+// configuration as C-06. User corrections beat assistant suggestions.
+test('drops a rejected option the assistant had only hypothesised', () => {
+  const transcript = [
+    'user: 为什么少一条出入库输送线，所有的线路都是出入库复用的',
+    'assistant: 如果现场是「两条入库、一条出库」的非对称配置，请告诉我。',
+  ].join('\n');
+  const markdown = [
+    '### 9.3 待确认事项',
+    '',
+    '| 编号 | 待确认事项 |',
+    '|---|---|',
+    '| C-05 | 平面布置三组两库还是六个独立库待确认 |',
+    '| C-06 | RGV 与巷道输送线接口处标高一致性、两条入库一条出库非对称配置待确认 |',
+  ].join('\n');
+  const out = applySettledCorrections(markdown, transcript);
+  assert.doesNotMatch(out, /两条入库/);
+  assert.doesNotMatch(out, /非对称配置/);
+  // The genuine open question sharing that cell survives.
+  assert.match(out, /标高一致性/);
+  assert.match(out, /平面布置三组两库/);
+  assert.match(out, /^\| C-06 \| RGV/m, 'the row keeps its numbering');
+});
+
+
+// The observed failure: the document recorded "同意进入详细设计阶段" although no
+// review had happened. A deliverable may recommend a review, never invent one.
+test('rewrites a review verdict the conversation never gave', () => {
+  const markdown = [
+    '### 9.4 评审结论',
+    '',
+    '结论：方案总体可行，同意进入详细设计阶段，待确认事项按 9.3 清单闭环后冻结基线。',
+  ].join('\n');
+  const out = applySettledCorrections(markdown, 'user: 继续\nassistant: 正文如下。');
+  assert.doesNotMatch(out, /同意进入详细设计/);
+  assert.match(out, /待评审/);
+  assert.match(out, /### 9\.4 评审结论/, 'the section heading stays');
+});
+
+test('keeps an approval the user actually gave', () => {
+  const markdown = '结论：方案总体可行，同意进入详细设计阶段。';
+  const out = applySettledCorrections(markdown, 'user: 评审通过了，同意进入详细设计阶段');
+  assert.match(out, /同意进入详细设计阶段/);
+});
+

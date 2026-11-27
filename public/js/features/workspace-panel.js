@@ -1,6 +1,295 @@
-import { api, els, state, toast } from '../core/index.js';
+import { api, el, els, icon, notifyUnauthorized, state, toast } from '../core/index.js';
 import { refreshSessions } from './sessions.js';
 import { bindWorkspaceForView, isSameWorkspaceTarget, workspaceTarget } from './workspace-session.js';
+
+let browserView = null;
+
+function clearWorkspaceImage() {
+  const image = els.workspaceBrowserImage;
+  if (image.hasAttribute('src')) URL.revokeObjectURL(image.src);
+  image.removeAttribute('src');
+  image.hidden = true;
+}
+
+/**
+ * Unloads the preview frame.
+ *
+ * `src` has to go, not just `hidden`: a page left loaded keeps painting and can
+ * still finish navigations, and the next file opened would be framed on top of
+ * stale content. `about:blank` is the one value that reliably clears it.
+ */
+function clearWorkspaceFrame() {
+  const frame = els.workspaceBrowserFrame;
+  frame.hidden = true;
+  if (frame.getAttribute('src') !== 'about:blank') frame.setAttribute('src', 'about:blank');
+}
+
+function closeWorkspaceBrowser() {
+  browserView?.request?.abort();
+  browserView = null;
+  els.workspaceBrowser.hidden = true;
+  els.workspaceBrowseBtn.setAttribute('aria-expanded', 'false');
+  els.workspaceBrowserPath.textContent = '';
+  els.workspaceBrowserPath.removeAttribute('title');
+  els.workspaceBrowserList.replaceChildren();
+  els.workspaceBrowserText.textContent = '';
+  clearWorkspaceImage();
+  clearWorkspaceFrame();
+  els.workspaceBrowserStatus.textContent = '';
+}
+
+function renderDirectory(view, data) {
+  const entries = document.createDocumentFragment();
+  for (const entry of data.entries) {
+    const item = el('li');
+    const row = el(entry.kind === 'file' ? 'span' : 'button', 'workspace-browser-entry');
+    row.append(icon(entry.kind === 'directory' ? 'folder' : 'document'), el('span', '', entry.name));
+    if (entry.kind === 'file') {
+      row.append(el('small', '', '无预览'));
+    } else {
+      row.type = 'button';
+      row.title = entry.name;
+      row.addEventListener('click', () => {
+        const path = view.directory ? `${view.directory}/${entry.name}` : entry.name;
+        if (entry.kind === 'directory') {
+          view.directory = path;
+          view.offset = 0;
+        } else {
+          view.file = path;
+          view.fileKind = entry.kind;
+          view.page = 1;
+          view.shownPage = 0;
+          view.totalPages = 0;
+        }
+        void loadWorkspaceBrowser();
+      });
+    }
+    item.append(row);
+    entries.append(item);
+  }
+
+  view.offset = data.offset;
+  view.previous = data.previous;
+  view.next = data.next;
+  els.workspaceBrowserList.replaceChildren(entries);
+  els.workspaceBrowserList.hidden = !data.entries.length;
+  els.workspaceBrowserStatus.textContent = data.entries.length ? '' : '此目录没有可显示的文件';
+  els.workspaceBrowserPages.hidden = data.previous === null && data.next === null;
+  els.workspaceBrowserPrev.disabled = data.previous === null;
+  els.workspaceBrowserNext.disabled = data.next === null;
+  els.workspaceBrowserCount.textContent = `${data.offset + 1}–${data.offset + data.entries.length} / ${data.total}`;
+}
+
+function syncPdfPager(view) {
+  const total = view.totalPages;
+  if (!total) {
+    els.workspaceBrowserPages.hidden = true;
+    return;
+  }
+  els.workspaceBrowserPages.hidden = total <= 1;
+  els.workspaceBrowserPrev.disabled = view.page <= 1;
+  els.workspaceBrowserNext.disabled = view.page >= total;
+  els.workspaceBrowserCount.textContent = `${view.page} / ${total}`;
+}
+
+async function renderMedia(view, url, signal, current) {
+  const response = await fetch(url, { signal });
+  if (!response.ok) {
+    if (response.status === 401) notifyUnauthorized();
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || `无法预览文件 (${response.status})`);
+  }
+  const blob = await response.blob();
+  if (!current()) return;
+
+  // Decode into a detached image first: the picture already on screen stays
+  // visible until the replacement is known to be good, so a failed page shows
+  // its error next to readable content instead of an empty panel.
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const probe = new Image();
+    probe.src = objectUrl;
+    await probe.decode();
+  } catch {
+    URL.revokeObjectURL(objectUrl);
+    if (!current()) return;
+    throw new Error('图片无法显示，文件可能已损坏');
+  }
+  if (!current()) {
+    URL.revokeObjectURL(objectUrl);
+    return;
+  }
+
+  const image = els.workspaceBrowserImage;
+  if (image.hasAttribute('src')) URL.revokeObjectURL(image.src);
+  image.alt = view.file.split('/').at(-1);
+  image.src = objectUrl;
+  image.hidden = false;
+  view.shownFile = view.file;
+  els.workspaceBrowserStatus.textContent = '';
+
+  if (view.fileKind === 'pdf') {
+    view.page = Number(response.headers.get('X-Preview-Page'));
+    const total = Number(response.headers.get('X-Preview-Total-Pages'));
+    // Kept so a later page that fails can fall back to this one instead of
+    // leaving the panel blank with no way back.
+    view.shownPage = view.page;
+    view.totalPages = total;
+    syncPdfPager(view);
+  }
+}
+
+/**
+ * Renders an HTML file in the sandboxed frame.
+ *
+ * The page is loaded from the raw route, not from the preview route: the panel
+ * needs the browser to parse and lay it out, and relative assets like
+ * `style.css` have to resolve next to it. The frame carries
+ * `sandbox="allow-same-origin"` with no `allow-scripts`, so even markup that
+ * tries to run something stays inert.
+ *
+ * `load` never fires for a page the server refused; the frame then shows the
+ * browser's own error, so the status line explains the likely cause instead.
+ */
+function renderPage(view, request, current) {
+  const frame = els.workspaceBrowserFrame;
+  view.shownFile = view.file;
+  els.workspaceBrowserStatus.textContent = '正在渲染网页…';
+  frame.addEventListener('load', () => {
+    if (!current()) return;
+    els.workspaceBrowserStatus.textContent = '网页预览 · 脚本已禁用';
+  }, { once: true });
+  frame.hidden = false;
+  frame.setAttribute('src', `/api/sessions/${view.sessionId}/workspace/raw/${encodePath(view.file)}`);
+}
+
+/** Encodes each segment so a `#` or `?` in a filename stays part of the path. */
+function encodePath(relative) {
+  return String(relative).split('/').map(encodeURIComponent).join('/');
+}
+
+/** Kinds served as bytes rather than JSON. */
+function isMediaKind(kind) {
+  return kind === 'image' || kind === 'pdf' || kind === 'cad';
+}
+
+async function loadWorkspaceBrowser() {
+  const view = browserView;
+  if (!view) return;
+  view.request?.abort();
+  const request = new AbortController();
+  view.request = request;
+  const query = new URLSearchParams(view.file
+    ? { file: view.file }
+    : { directory: view.directory, offset: view.offset });
+  if (view.fileKind === 'pdf' && view.file) query.set('page', view.page);
+  const url = `/api/sessions/${view.sessionId}/workspace?${query}`;
+  const location = [state.workspace.name || view.root, view.file || view.directory].filter(Boolean).join(' / ');
+  els.workspaceBrowserPath.textContent = location;
+  els.workspaceBrowserPath.title = location;
+  els.workspaceBrowserBack.disabled = !view.file && !view.directory;
+  els.workspaceBrowserStatus.textContent = '正在读取…';
+  els.workspaceBrowserList.hidden = true;
+  els.workspaceBrowserText.hidden = true;
+  // Only drop the picture when the view moved to another file. For a PDF page
+  // turn the current page stays up until the next one decodes, so a failed page
+  // leaves something readable on screen.
+  if (view.file !== view.shownFile) {
+    clearWorkspaceImage();
+    view.shownFile = '';
+  }
+  els.workspaceBrowserPages.hidden = true;
+  if (view.fileKind !== 'html') clearWorkspaceFrame();
+  const current = () => browserView === view && !request.signal.aborted &&
+    isSameWorkspaceTarget(view, workspaceTarget(state)) && view.root === state.workspace?.root;
+
+  try {
+    if (view.file && view.fileKind === 'html') {
+      renderPage(view, request, current);
+    } else if (view.file && isMediaKind(view.fileKind)) {
+      await renderMedia(view, url, request.signal, current);
+    } else {
+      const data = await api(url, { signal: request.signal });
+      if (!current()) return;
+      if (view.file) {
+        const office = view.fileKind === 'office';
+        els.workspaceBrowserStatus.textContent = office
+          ? (data.truncated ? '内容预览 · 仅显示开头' : '内容预览')
+          : (data.truncated ? '仅显示文件开头' : '');
+        els.workspaceBrowserText.textContent = data.content;
+        els.workspaceBrowserText.hidden = false;
+      } else {
+        renderDirectory(view, data);
+      }
+    }
+    if (!current()) return;
+    els.workspaceBrowserBody.scrollTop = 0;
+  } catch (error) {
+    if (!current()) return;
+    els.workspaceBrowserStatus.textContent = error.message;
+    // A PDF page that failed to render must not take the pager with it: restore
+    // the controls, and put the page number back on the one still on screen so
+    // "next" can be retried instead of scrolling into nothing.
+    if (view.fileKind === 'pdf' && view.shownPage) {
+      view.page = view.shownPage;
+      syncPdfPager(view);
+    }
+  }
+}
+
+export function bindWorkspaceBrowserEvents() {
+  const close = () => {
+    closeWorkspaceBrowser();
+    els.workspaceBrowseBtn.focus();
+  };
+  els.workspaceBrowseBtn.addEventListener('click', () => {
+    if (browserView) {
+      close();
+      return;
+    }
+    if (!workspaceAvailable() || !state.sessionId || !state.workspace?.root) return;
+    browserView = { ...workspaceTarget(state), root: state.workspace.root, directory: '', file: '', offset: 0 };
+    els.workspaceBrowser.hidden = false;
+    els.workspaceBrowseBtn.setAttribute('aria-expanded', 'true');
+    void loadWorkspaceBrowser();
+  });
+  els.workspaceBrowserClose.addEventListener('click', close);
+  els.workspaceBrowser.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') close();
+  });
+  els.workspaceBrowserRefresh.addEventListener('click', loadWorkspaceBrowser);
+  els.workspaceBrowserBack.addEventListener('click', () => {
+    if (!browserView) return;
+    if (browserView.file) {
+      browserView.file = '';
+      browserView.fileKind = '';
+      browserView.shownPage = 0;
+      browserView.totalPages = 0;
+      browserView.shownFile = '';
+    } else {
+      browserView.directory = browserView.directory.substring(0, browserView.directory.lastIndexOf('/'));
+      browserView.offset = 0;
+    }
+    void loadWorkspaceBrowser();
+  });
+  for (const [button, direction, field] of [
+    [els.workspaceBrowserPrev, -1, 'previous'],
+    [els.workspaceBrowserNext, 1, 'next'],
+  ]) {
+    button.addEventListener('click', () => {
+      if (!browserView) return;
+      if (browserView.file && browserView.fileKind === 'pdf') {
+        const next = browserView.page + direction;
+        const total = browserView.totalPages || next;
+        browserView.page = Math.min(Math.max(1, next), total);
+      } else {
+        if (browserView[field] == null) return;
+        browserView.offset = browserView[field];
+      }
+      void loadWorkspaceBrowser();
+    });
+  }
+}
 
 // The directory comes from the native picker in the desktop shell; the web app
 // has no such bridge and never exposes this control.
@@ -17,9 +306,15 @@ export function renderWorkspace() {
   // Both gates must hold: the deployment allows local reads, and this browser
   // context has the native picker bridge. A web tab gets neither.
   const usable = Boolean(state.workspaceEnabled && desktopBridge());
+  const root = state.workspace?.root || '';
+  const browsable = usable && Boolean(root && state.sessionId);
+  els.workspaceBrowseBtn.hidden = !browsable;
+  if (browserView && (!browsable || root !== browserView.root ||
+    !isSameWorkspaceTarget(browserView, workspaceTarget(state)))) {
+    closeWorkspaceBrowser();
+  }
   els.workspaceBtn.hidden = !usable;
   if (!usable) return;
-  const root = state.workspace?.root || '';
   // The full path is what disambiguates two checkouts with the same folder
   // name; the basename alone ("imageGen") is ambiguous once a project has more
   // than one copy. Middle-ellipsis keeps both the root and the leaf readable.
@@ -52,17 +347,16 @@ export async function loadWorkspaceStatus() {
  * response cannot overwrite a newer switch.
  */
 export async function syncWorkspaceForSession(sessionId) {
-  if (!sessionId) {
-    state.workspace = null;
-    renderWorkspace();
-    return;
-  }
+  const requested = workspaceTarget(state);
+  state.workspace = null;
+  renderWorkspace();
+  if (!sessionId) return;
   try {
     const session = await api(`/api/sessions/${sessionId}`);
-    if (state.sessionId !== sessionId) return;
+    if (!isSameWorkspaceTarget(requested, workspaceTarget(state))) return;
     state.workspace = session.workspace || null;
   } catch {
-    if (state.sessionId !== sessionId) return;
+    if (!isSameWorkspaceTarget(requested, workspaceTarget(state))) return;
     state.workspace = null;
   }
   renderWorkspace();

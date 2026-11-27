@@ -527,14 +527,15 @@ test('a page that fails to render keeps the picture the planner picked', () => {
   };
   const png = PNG;
   const fallback = toPptxSlides(plan, new Map([['abc123', { data: png, width: 8, height: 6, caption: '架构' }]]));
-  const slides = toRasterSlides(plan, [{ index: 0, buffer: png }, { index: 1, buffer: null }], fallback);
+  const rendered = [{ index: 0, buffer: png, width: 1, height: 1 }, { index: 1, buffer: null }];
+  const slides = toRasterSlides(plan, rendered, fallback);
 
   assert.equal(slides[1].layout, 'image', 'the authored image layout survives');
   assert.ok(slides[1].image?.data, 'and it still carries the actual bitmap');
   assert.equal(slides[1].image.width, 8, 'with the measured dimensions intact');
   // Without the fallback base the raw plan slide would be returned instead,
   // and the packager would find no image data to embed.
-  const withoutBase = toRasterSlides(plan, [{ index: 0, buffer: PNG }, { index: 1, buffer: null }]);
+  const withoutBase = toRasterSlides(plan, rendered);
   assert.equal(withoutBase[1].image, undefined, 'the raw plan slide has no bitmap');
   assert.equal(withoutBase[1].imageId, 'abc123', 'only an id, which cannot be embedded');
 });
@@ -543,7 +544,7 @@ test('a rasterised page keeps its outline for the preview', () => {
   const plan = {
     slides: [{ layout: 'bullets', title: '2026 成果', bullets: ['投资完成率 98.4%', '验收通过率 96%'] }],
   };
-  const slides = toRasterSlides(plan, [{ index: 0, buffer: PNG }]);
+  const slides = toRasterSlides(plan, [{ index: 0, buffer: PNG, width: 1, height: 1 }]);
   assert.equal(slides[0].layout, 'fullbleed');
   assert.deepEqual(slides[0].bullets, ['投资完成率 98.4%', '验收通过率 96%']);
 

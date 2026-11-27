@@ -400,7 +400,12 @@ async function createDocument(args, ctx) {
       signal: ctx.signal,
       format,
       visual,
+      includeImages: args?.include_images !== false,
       emit: ctx.emit,
+      // Pictures this turn already generated live only in this array: the chat
+      // row the exporter reloads has not been saved yet, so the document would
+      // otherwise be written without the images the user just asked for.
+      turnImages: ctx.turnImages,
     });
     const document = await saveGeneratedDocument({
       userId: ctx.user.id,
@@ -433,9 +438,19 @@ async function createDocument(args, ctx) {
         imageCount: document.imageCount,
         createdAt: document.createdAt,
         ...(degraded ? { degraded: result.planStatus } : {}),
+        ...(result.issues?.length ? { issues: result.issues } : {}),
         ...(partialVisual ? { textPages: partialVisual } : {}),
       },
     });
+    const note = result.issues?.length
+      ? `已保存部分稿。${result.issues.join('；')}。请告知用户上述原因。`
+      : degraded
+        ? `文档已生成并保存，但页面策划${result.planStatus === 'salvaged' ? '被截断，只保留了写完整的页面' : '失败，已退回按原文机械分页'}。这是初稿，需要重新整理后再交付。请如实告诉用户这一点，不要让用户以为这是可直接评审的终稿。`
+        : visual && !partialVisual
+          ? '视觉稿已生成，每页都是图片，用户可在「我的文档」中查看和下载。可以提醒用户：图片页的文字不可直接编辑，需要改字时用可编辑版本重出。'
+          : result.archivedImages
+            ? `文档已生成，正文选用 ${result.bodyImages} 张图片，另有 ${result.archivedImages} 张入选图片收录于文末附录。用户可在「我的文档」查看和下载。`
+            : '文档已生成，用户可在「我的文档」中查看和下载。';
     return {
       ok: true,
       document: {
@@ -446,19 +461,16 @@ async function createDocument(args, ctx) {
         image_count: document.imageCount,
         ...(result.slideCount ? { slide_count: result.slideCount } : {}),
       },
-      note: result.reusedDraft
-        ? `文档已生成并保存，正文取自本会话已有的终稿，未经模型重写。用户可在「我的文档」中查看和下载。请告诉用户这份文件是按已有正文直接排版的；如果用户要补充或修改内容，需要先说出改什么，再重新生成。`
-        : degraded
-          ? `文档已生成并保存，但页面策划${result.planStatus === 'salvaged' ? '被截断，只保留了写完整的页面' : '失败，已退回按原文机械分页'}。这是初稿，需要重新整理后再交付。请如实告诉用户这一点，不要让用户以为这是可直接评审的终稿。`
-          : partialVisual
-            ? `视觉稿已生成并保存。其中第 ${partialVisual.join('、')} 页未能绘制，这几页保留了可编辑的文字版式，其余页为图片。请如实告诉用户哪几页是文字版。`
-            : visual
-              ? '视觉稿已生成，每页都是图片，用户可在「我的文档」中查看和下载。可以提醒用户：图片页的文字不可直接编辑，需要改字时用可编辑版本重出。'
-              : '文档已生成，用户可在「我的文档」中查看和下载。',
-      ...(result.reusedDraft ? { reusedDraft: true } : {}),
+      note: partialVisual
+        ? `${note}第 ${partialVisual.join('、')} 页未能生成符合要求的整页图，已使用可编辑版式。请告知用户这些页码。`
+        : note,
+      ...(result.issues?.length ? { issues: result.issues } : {}),
       ...(degraded ? { degraded: result.planStatus } : {}),
       ...(visual ? { visual: true } : {}),
       ...(partialVisual ? { textPages: partialVisual } : {}),
+      ...(result.archivedImages
+        ? { body_images: result.bodyImages, archived_images: result.archivedImages }
+        : {}),
     };
   } catch (err) {
     if (ctx.signal?.aborted) throw err;
@@ -477,9 +489,123 @@ async function workspaceTool(run, args, ctx) {
   }
 }
 
+/**
+ * Per-turn memo for image tools.
+ *
+ * A model that has just seen a picture often re-issues the same call — either
+ * because it did not register that the tool already succeeded, or because it
+ * wants "another take" with the exact same wording. Every repeat is a real,
+ * billed provider request and lands as near-identical pictures the user never
+ * asked for. Identical calls within one turn therefore resolve to the batch
+ * that was already generated; a changed prompt, count, aspect ratio or
+ * reference list is a new request and runs normally.
+ *
+ * Keyed on the raw arguments, before prompt optimisation, so the key is stable
+ * regardless of what the optimiser returns. A failed call is removed from the
+ * memo: it must stay retryable.
+ */
+const imageMemoByContext = new WeakMap();
+
+function imageMemoFor(ctx) {
+  if (!ctx || typeof ctx !== 'object') return null;
+  let memo = imageMemoByContext.get(ctx);
+  if (!memo) {
+    memo = new Map();
+    imageMemoByContext.set(ctx, memo);
+  }
+  return memo;
+}
+
+function imageCallKey(name, args, ctx) {
+  const prompt = String(args?.prompt || '')
+    .trim()
+    .replace(/\s+/g, ' ');
+  const count = Number(args?.count) || 1;
+  const aspect = String(args?.aspect_ratio || '');
+  // Order is part of the request: the provider receives the files in this
+  // sequence and the prompt calls them Image 1, Image 2, so [A,B] and [B,A]
+  // are different edits and must not share one memo entry.
+  const resolved = resolveReferences(args || {}, ctx);
+  // edit_image falls back to the session's newest picture when no reference is
+  // named; that implicit target is part of the request too.
+  if (!resolved.length && name === 'edit_image' && ctx?.chat?.lastImageId) {
+    resolved.push({ id: ctx.chat.lastImageId, role: '参考' });
+  }
+  const references = resolved.map((ref) => `${ref.id}:${ref.role || '参考'}`).join('|');
+  return `${name}\u0000${prompt}\u0000${count}\u0000${aspect}\u0000${references}`;
+}
+
+function currentRound(ctx) {
+  return Number.isInteger(ctx?.toolRound) ? ctx.toolRound : 0;
+}
+
+/** An outcome nobody knows: the provider may already have made the picture. */
+function uncertainOutcome(err) {
+  return err?.uncertain === true || err?.name === 'TimeoutError';
+}
+
+async function imageToolWithMemo(name, args, run, ctx) {
+  const memo = imageMemoFor(ctx);
+  if (!memo) return run(args, ctx);
+  const key = imageCallKey(name, args, ctx);
+  const round = currentRound(ctx);
+  const previous = memo.get(key);
+  // Two identical calls inside ONE batch can be the user asking for two
+  // pictures, so they both run. A repeat in a LATER round is the model
+  // re-issuing work it already did after seeing the result: that is the
+  // duplicate which used to bill and deliver the same picture again.
+  if (previous && previous.uncertain) {
+    // The earlier attempt timed out with the outcome unknown: the provider may
+    // already have produced (and billed) this picture. Re-sending is how one
+    // request becomes several, so refuse — in a later round and in the same
+    // batch alike — and let the model reconcile with the user.
+    return {
+      ok: false,
+      uncertain: true,
+      error:
+        '上一次同内容的出图请求超时，供应商可能已经出图；为避免重复生成，本轮不再自动重发。请先确认是否已经在画册里看到这张图，需要时再明确重试。',
+    };
+  }
+  if (previous && previous.round < round) {
+    const result = await previous.pending;
+    const ids = (result?.images || []).map((image) => image.image_id).filter(Boolean);
+    return {
+      ...result,
+      reused: true,
+      note: `本轮已经生成过这批图片${ids.length ? `（image_id=${ids.join('、')}）` : ''}，没有重复请求。直接使用上面的结果即可。`,
+    };
+  }
+  const record = { round, pending: null, uncertain: false };
+  const pending = run(args, ctx).then(
+    (result) => {
+      if (!result?.ok && memo.get(key) === record) memo.delete(key);
+      return result;
+    },
+    (err) => {
+      // An unknown outcome must stay on record. Deleting it is what let an
+      // identical model call re-POST and produce the picture twice.
+      if (uncertainOutcome(err)) {
+        if (memo.get(key) === record) {
+          record.uncertain = true;
+        }
+      } else if (memo.get(key) === record) {
+        memo.delete(key);
+      }
+      throw err;
+    },
+  );
+  record.pending = pending;
+  if (!previous || previous.round < round) memo.set(key, record);
+  return pending;
+}
+
 export async function runTool(name, args, ctx) {
-  if (name === 'generate_image') return generateImages(args, ctx);
-  if (name === 'edit_image') return editImage(args, ctx);
+  if (name === 'generate_image') {
+    return imageToolWithMemo(name, args, generateImages, ctx);
+  }
+  if (name === 'edit_image') {
+    return imageToolWithMemo(name, args, editImage, ctx);
+  }
   if (name === 'create_document') return createDocument(args, ctx);
   if (name === 'list_workspace_files') return workspaceTool(listWorkspaceFiles, args, ctx);
   if (name === 'read_workspace_file') return workspaceTool(readWorkspaceFile, args, ctx);

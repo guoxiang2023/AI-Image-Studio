@@ -173,6 +173,42 @@ test('rasterizes vector pages that carry no bitmap', async () => {
   assert.ok(ink > 1000, `expected drawn geometry, got ${ink} ink pixels`);
 });
 
+test('a reference page keeps text drawn in a standard font', async () => {
+  // PDFs draw Helvetica/Times labels as glyph paths. With system font
+  // substitution on, PDF.js returns before loading its bundled font files and
+  // those paths come out empty, so the reference image loses every label while
+  // the line work still looks fine.
+  const doc = new PDFDocument({ size: 'A4', margin: 0 });
+  const chunks = [];
+  doc.on('data', (chunk) => chunks.push(chunk));
+  const done = new Promise((resolve, reject) => {
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+  });
+  doc.fontSize(36).text('Label', 60, 60);
+  // Line work far below the text, so an assertion over the text band cannot be
+  // satisfied by the rectangles when the glyphs go missing.
+  for (let i = 0; i < 120; i += 1) {
+    doc.rect(20 + (i % 12) * 48, 600 + Math.floor(i / 12) * 20, 40, 12).stroke('#123456');
+  }
+  doc.end();
+
+  const [page] = await extractPdfImages(await done);
+  const { data, info } = await sharp(page.buffer).removeAlpha().raw()
+    .toBuffer({ resolveWithObject: true });
+  // A4 is 842 points tall; the word starts at y=60 inside the top 10%.
+  assert.ok(page.height > 800);
+  let dark = 0;
+  for (let y = 0; y < Math.floor(info.height * 0.1); y += 1) {
+    for (let x = 0; x < info.width; x += 1) {
+      const offset = (y * info.width + x) * info.channels;
+      if (data[offset] < 120 && data[offset + 1] < 120 && data[offset + 2] < 120) dark += 1;
+    }
+  }
+  // Measured: 0 dark pixels with system fonts on, ~4000 with the bundled font.
+  assert.ok(dark > 1000, `expected rendered text, got ${dark} dark pixels in the text band`);
+});
+
 test('a page with almost no geometry is not worth a screenshot', async () => {
   const doc = new PDFDocument({ size: [400, 300], margin: 20 });
   const chunks = [];

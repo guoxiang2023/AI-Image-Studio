@@ -34,6 +34,8 @@ import {
   handleDocument,
   handleDocumentDownload,
   handleDocumentFile,
+  handleGenerateSelectedDocument,
+  handleSessionDocumentImages,
   handleListDocuments,
 } from './routes/documents.js';
 import {
@@ -48,7 +50,7 @@ import {
   handleUpdateStatus,
   handleVersion,
 } from './routes/version.js';
-import { handleWorkspace, handleWorkspaceStatus } from './routes/workspace.js';
+import { handleWorkspace, handleWorkspaceAsset, handleWorkspaceStatus } from './routes/workspace.js';
 import { serveImageFile, serveStatic } from './static.js';
 
 function buildRouter() {
@@ -91,6 +93,12 @@ function buildRouter() {
   router.get('/api/sessions/:id/export', ({ req, res, user, params }) =>
     handleExportSession(req, res, user, params.id),
   );
+  router.get('/api/sessions/:id/document-images', ({ req, res, user, params }) =>
+    handleSessionDocumentImages(req, res, user, params.id),
+  );
+  router.post('/api/sessions/:id/documents', ({ req, res, user, params }) =>
+    handleGenerateSelectedDocument(req, res, user, params.id),
+  );
   router.get('/api/sessions/:id', ({ req, res, user, params }) =>
     handleSession(req, res, user, params.id),
   );
@@ -104,11 +112,19 @@ function buildRouter() {
     handleDiscardUnusedSession(req, res, user, params.id),
   );
   router.get('/api/workspace/status', ({ req, res }) => handleWorkspaceStatus(req, res));
+  router.get('/api/sessions/:id/workspace', ({ req, res, user, params, url }) =>
+    handleWorkspace(req, res, user, params.id, url.searchParams),
+  );
   router.put('/api/sessions/:id/workspace', ({ req, res, user, params }) =>
     handleWorkspace(req, res, user, params.id),
   );
   router.delete('/api/sessions/:id/workspace', ({ req, res, user, params }) =>
     handleWorkspace(req, res, user, params.id),
+  );
+  // Directory-shaped so a page's own `style.css` / `logo.png` requests resolve
+  // next to it. `rest` swallows nested paths; the handler re-validates each one.
+  router.get('/api/sessions/:id/workspace/raw/*', ({ req, res, user, params }) =>
+    handleWorkspaceAsset(req, res, user, params.id, params.rest),
   );
   router.delete('/api/sessions/:id', ({ req, res, user, params }) =>
     handleSession(req, res, user, params.id),

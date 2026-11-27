@@ -3,6 +3,7 @@ import { els, toast } from '../core/index.js';
 let activePrompt = '';
 let lightboxItems = [];
 let lightboxIndex = 0;
+let lightboxOpener = null;
 
 function renderLightbox() {
   const item = lightboxItems[lightboxIndex];
@@ -15,13 +16,17 @@ function renderLightbox() {
   els.lightboxCount.textContent = multiple ? `${lightboxIndex + 1} / ${lightboxItems.length}` : '';
 }
 
-export function openLightbox(url, { images = null, index = 0 } = {}) {
+export function openLightbox(url, { images = null, index = 0, opener = null } = {}) {
   const list = Array.isArray(images) && images.length ? images : [{ url }];
   const start = Number.isInteger(index) ? Math.min(Math.max(index, 0), list.length - 1) : 0;
   lightboxItems = list.map((item) => (typeof item === 'string' ? { url: item } : item));
   lightboxIndex = start;
+  // A click does not always leave the trigger as activeElement (a tile is a
+  // label, and its picture swallows focus), so the caller names it explicitly.
+  lightboxOpener = opener || document.activeElement;
   els.lightbox.hidden = false;
   renderLightbox();
+  els.lightboxClose.focus();
 }
 
 export function stepLightbox(delta) {
@@ -35,6 +40,8 @@ export function closeLightbox() {
   els.lightboxImg.src = '';
   lightboxItems = [];
   lightboxIndex = 0;
+  if (lightboxOpener?.isConnected) lightboxOpener.focus();
+  lightboxOpener = null;
 }
 
 export function openSidebar() {

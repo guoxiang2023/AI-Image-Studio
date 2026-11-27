@@ -57,6 +57,7 @@ src/
     tools-service.js              # generate_image / edit_image / create_document / workspace 工具
     document-service.js           # 会话整理为 Word/PDF/PPT；PPT 走独立页级分支
     workspace-service.js          # 会话绑定的工作目录：扫描、索引、受限读取
+    workspace-html.js             # HTML 预览：页面与其同目录资源的安全下发（禁脚本）
     summary-service.js            # 会话摘要压缩
     document-library-service.js   # 生成文档的落盘、列表、预览和删除
     session-transfer-service.js   # 会话 ZIP 导出、校验、导入与图片 ID 重映射
@@ -89,6 +90,9 @@ src/
     image-storage.js              # 文件路径、读写、尺寸探测
     document-storage.js           # 上传文档与提取文本的存储
     document-text.js              # txt / docx / xlsx / pptx / pdf 文字提取
+    document-formats.js           # ODF / RTF / EPUB / EML / ipynb 文字提取（预览用）
+    cad-preview.js                # DWG/DXF 预览栅格化（与参考图路径共用实体绘制）
+    image-preview.js              # 侧栏图片缩放；SVG/TIFF 栅格化为 WebP
     pdf-images.js                 # PDF 内嵌位图提取 + 矢量页栅格化（用作参考图）
     dwg-image.js                  # DWG→DXF→SVG→PNG，CAD 图纸渲染为参考图
     docx.js                       # WordprocessingML 与图片嵌入
@@ -159,20 +163,23 @@ SSE 生命周期留在 `http`；会话保存、摘要、工具编排留在 `serv
   -> agent-service 调用 create_document 工具
        document-service.generateSessionDocument
          读取完整会话（不受滚动摘要截断影响）
-         过滤画册中已移除、文件失效、parentId/supersedes/修订提示可判定的旧图
-         若对话超过单次预算，先逐块做结构化事实摘要（主题/架构/数据/接口/部署/风险），
-         再对摘要做语义归并直到长度收敛；覆盖片段数会写入摘要，超出单次输出的摘要
-         会拆分后重新摘要，不做前缀截断，也不跳过尾部片段；
-         再基于摘要做精简的“总—分—总”章节大纲：标题/类型/7–10 章，
-         输出预算 2048；解析失败、截断或请求异常时改用确定性 9 章大纲，不阻塞导出
-         第二次模型调用只选终稿配图：同一主题取最新版，优先具体技术选型
-         随后先写导语，再逐章生成；每章只取与该章相关的对话片段
-         （DOCUMENT_SECTION_CHARS 上限，数据库章节优先保留表格字段），
-         不再把 40k 全文反复塞进每个请求；上下文被拒时自动减半重试，
-         章节超限自动续写，仍超限保留已生成部分
-         配图选择失败时按时间回退到已筛过的候选图，不阻塞文档
-         解析 Markdown（含表格），过滤清单外/重复图片，不自动补入未选图片
-         sharp 统一转 JPEG，docx.js 生成 DOCX 或 pdf.js 生成 A4 PDF
+         图片候选来自三处并按生成时间合并去重：对话消息、同一轮的 turnImages、
+         本会话的画册记录；过滤画册中已移除、文件失效、parentId/supersedes/修订提示可判定的旧图
+         （画册收藏或用户确认的定稿用图可越过旧版过滤）。
+         对话工具收到明确的纯文字要求时传入 include_images: false，Word/PDF 跳过图片收集和配图策划。
+         长材料先按时间分块整理事实，再按主题去重合并；超长合并按简短条目重写一次，仍超限时保留节选。
+         用户明确要求按稿导出且草稿含编号章节时，沿用获准的章节结构，各章仍按会话原文和明确决定写作。摘要覆盖不全时记录原因。
+         大纲预算 4096 tokens，失败时按素材类型生成大纲并标为部分稿。
+         导语只概括交付物的背景、目的和结论。逐章检索原文与附件，
+         优先纳入相关用户原话，各章节收到同一份用户确认与修订原文。数据库章节保留字段表格。
+         章节上下文被拒时减半重试，超限时续写。某章缺失仍继续生成其余章节。
+         配图策划只选择与该文档结论和各章节相符的图。解析 Markdown 时过滤未知与重复 ID。
+         自动配图方案有效时，未被正文引用的入选图片收录到附录。明确返回空列表时只保留用户确认的图片，
+         无确认图时导出纯文字。
+         配图请求失败、截断或响应无法解析时，按已确认、收藏、最近生成的优先级选取候选图，
+         在终稿配图数量上限内按会话顺序收录到附录，并标明降级原因。手动选图导出保留所有勾选的图片。
+         图注不带对话原句，选图导出额外标注来源和轮次。
+         sharp 统一转 JPEG（附录图按较小尺寸转），docx.js 生成 DOCX 或 pdf.js 生成 A4 PDF
        document-library-service.saveGeneratedDocument
          写入 generated_documents 表 + 用户文档文件
   -> SSE document 事件，提示用户到「我的文档」查看
@@ -183,6 +190,8 @@ GET /api/documents/:id/download  # 下载附件
 GET /api/documents/:id/file      # PDF 内联查看
 DELETE /api/documents/:id        # 删除
 ```
+
+选图导出沿用章节写作和文件渲染，只向配图阶段提供所选图片。图旁标注来源和轮次，生成图的默认图注使用来源名称。
 
 策划或配图请求失败时自动降级为确定性大纲/已筛候选图；章节或导语超限时保留已生成部分，不因单次输出预算中止。只有章节请求完全无内容、用户取消或总超时才报错。文档子调用会显式关闭 Anthropic-compatible 网关的隐藏 thinking，避免推理 tokens 吃光可见输出；分章仍保留续写兜底。PDF 会自动查找系统 CJK 字体，也可用 `DOCUMENT_PDF_FONT` 指定。
 

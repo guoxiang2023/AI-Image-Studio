@@ -12,6 +12,7 @@ import {
 } from '../../services/chat-service.js';
 import { loadSettings } from '../../services/model-settings-service.js';
 import { compressChatNow } from '../../services/summary-service.js';
+import { isLossySummary } from '../../domain/chat.js';
 import { friendlyError } from '../../shared/utils.js';
 import {
   SESSION_IMPORT_MAX_BYTES,
@@ -101,6 +102,14 @@ export async function handleCompactSession(req, res, user, sessionId) {
     return json(res, 400, { error: '请先在「模型设置」中配置对话模型 API Key' });
   }
 
+  // Manual compaction is the repair entry point. A card carrying a truncation
+  // or excerpt marker is known to have dropped facts, so this explicit request
+  // re-reads the original messages and rebuilds it; nothing is ever deleted, so
+  // the rebuild can always recover what the card lost. The client may also ask
+  // for it outright, which is how a user retries a card that merely looks thin.
+  const body = await readJsonBody(req);
+  const rebuild = body?.rebuild === true || isLossySummary(chat.summary);
+
   const controller = new AbortController();
   const onClose = () => {
     if (!res.writableEnded) controller.abort();
@@ -110,6 +119,7 @@ export async function handleCompactSession(req, res, user, sessionId) {
   try {
     const result = await compressChatNow(chat, models.llm, controller.signal, {
       saveSummary: updateSummary,
+      rebuild,
     });
     return json(res, 200, { ok: true, ...result });
   } catch (err) {

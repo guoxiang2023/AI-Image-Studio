@@ -1,6 +1,8 @@
 import { createReadStream } from 'node:fs';
 import { stat } from 'node:fs/promises';
-import { json } from '../responses.js';
+import { json, readJsonBody } from '../responses.js';
+import { loadChatForUser } from '../../services/chat-service.js';
+import { generateSelectedDocument, listSessionDocumentImages } from '../../services/document-service.js';
 import {
   deleteUserDocument,
   getUserDocument,
@@ -54,6 +56,31 @@ async function serveDocumentFile(res, user, id, { inline = false } = {}) {
     if (!res.writableEnded) res.end();
   });
   stream.pipe(res);
+}
+
+export async function handleSessionDocumentImages(req, res, user, sessionId) {
+  const chat = loadChatForUser(user.id, sessionId);
+  if (!chat) return json(res, 404, { error: '会话不存在' });
+  return json(res, 200, { images: await listSessionDocumentImages(user, chat) });
+}
+
+export async function handleGenerateSelectedDocument(req, res, user, sessionId) {
+  const chat = loadChatForUser(user.id, sessionId);
+  if (!chat) return json(res, 404, { error: '会话不存在' });
+  const body = await readJsonBody(req);
+  if (!['docx', 'pdf'].includes(body?.format) || !Array.isArray(body.imageIds) ||
+      !body.imageIds.every((id) => typeof id === 'string' && /^[a-f0-9]{16,40}$/.test(id))) {
+    return json(res, 400, { error: '请选择 Word 或 PDF，并提供会话图片列表' });
+  }
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  res.once('close', abort);
+  try {
+    const result = await generateSelectedDocument({ user, chat, format: body.format, imageIds: body.imageIds, signal: controller.signal });
+    return json(res, 201, result);
+  } finally {
+    res.off('close', abort);
+  }
 }
 
 export function handleListDocuments(req, res, user) {

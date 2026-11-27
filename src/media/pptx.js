@@ -380,18 +380,12 @@ function imageSlide(slide, nextId, source) {
   };
 }
 
-/**
- * A page that is a single image filling the 16:9 canvas.
- *
- * Used when the deck is rasterised page by page: the picture already contains
- * the title and bullets, so adding text shapes would double-print every line.
- * Covering the whole canvas is what makes it look like a designed slide rather
- * than a picture dropped onto one.
- */
-function fullBleedSlide(slide, nextId, source) {
+// The bitmap already contains the title and bullets. Fit it inside the
+// whole slide so those elements stay visible and keep their proportions.
+function rasterSlide(nextId, source) {
   return {
     shapes: [],
-    image: { box: { x: 0, y: 0, cx: SLIDE_W, cy: SLIDE_H }, id: nextId(), cover: true },
+    image: { box: { x: 0, y: 0, cx: SLIDE_W, cy: SLIDE_H }, id: nextId() },
     source,
     report: { overflow: false, clipped: 0, dropped: 0 },
   };
@@ -408,7 +402,7 @@ export const PPTX_LAYOUTS = [...Object.keys(LAYOUTS), 'fullbleed'];
 
 function buildSlide(slide, nextId) {
   if (slide.layout === 'fullbleed') {
-    return { kind: 'fullbleed', ...fullBleedSlide(slide, nextId, slide.image) };
+    return { kind: 'fullbleed', ...rasterSlide(nextId, slide.image) };
   }
   const kind = LAYOUTS[slide.layout] ? slide.layout : 'bullets';
   return { kind, ...LAYOUTS[kind](slide, nextId, slide.image) };
@@ -666,12 +660,7 @@ export function buildPptx({ title, slides, meta }) {
       imageRelId = 'rId2';
       mediaPath = `media/${entry.name}`;
       const box = slide.image.box;
-      // A rendered page is authored at 16:9 already, so it fills the canvas.
-      // Fitting it inside the box would letterbox it against the background.
-      const fitted = slide.image.cover
-        ? { cx: box.cx, cy: box.cy }
-        : fitImage(slide.source.width, slide.source.height, box.cx, box.cy);
-      const { cx, cy } = fitted;
+      const { cx, cy } = fitImage(slide.source.width, slide.source.height, box.cx, box.cy);
       slide.shapes.push(
         pictureShape({
           id: slide.image.id,

@@ -111,6 +111,19 @@ function standardFontDir() {
   }
 }
 
+// Predefined CMaps are how a CJK PDF with an unembedded CID font maps its byte
+// codes to glyphs. PDF.js ships them as `cmaps/*.bcmap` and refuses the font
+// outright without `cMapUrl`, so every such page rendered blank.
+function cMapDir() {
+  try {
+    const require = createRequire(import.meta.url);
+    const pkg = require.resolve('pdfjs-dist/package.json');
+    return `${path.dirname(pkg)}${path.sep}cmaps${path.sep}`;
+  } catch {
+    return null;
+  }
+}
+
 function countGeometry(ops, pdfjs) {
   let vector = 0;
   for (const fn of ops.fnArray) {
@@ -177,7 +190,10 @@ async function collectBitmaps(page, ops, pdfjs, budget) {
 // OCR needs the page as a lossless bitmap: `pageToReference` re-encodes to JPEG
 // for image models, which blurs small type. This renders a page (or a run of
 // pages) straight to PNG and hands each one to the OCR backend.
-export async function rasterizePagesForOcr(buffer, { maxPages = 20, scale = 1 } = {}) {
+export async function rasterizePagesForOcr(
+  buffer,
+  { maxPages = 20, scale = 1, startPage = 1, maxEdge = PAGE_RENDER_EDGE } = {},
+) {
   if (!buffer.subarray(0, 1024).toString('latin1').includes('%PDF-')) {
     throw new AppError(400, '不是有效的 PDF 文件');
   }
@@ -191,6 +207,7 @@ export async function rasterizePagesForOcr(buffer, { maxPages = 20, scale = 1 } 
   }
   const canvasFactory = canvasFactoryFor(canvasModule);
   const fontDir = standardFontDir();
+  const cmapDir = cMapDir();
   const pages = [];
   let pdf;
   try {
@@ -198,20 +215,24 @@ export async function rasterizePagesForOcr(buffer, { maxPages = 20, scale = 1 } 
       data: new Uint8Array(buffer),
       useWorkerFetch: false,
       isEvalSupported: false,
-      useSystemFonts: true,
+      // Server-side canvas uses glyph paths. PDF.js skips its bundled standard
+      // fonts when system font substitution is enabled, leaving those paths empty.
+      useSystemFonts: false,
       disableFontFace: true,
       canvasFactory,
       ...(fontDir ? { standardFontDataUrl: fontDir } : {}),
+      ...(cmapDir ? { cMapUrl: cmapDir, cMapPacked: true } : {}),
     }).promise;
-    const total = Math.min(pdf.numPages, maxPages);
-    for (let index = 1; index <= total; index += 1) {
+    const firstPage = Math.min(startPage, pdf.numPages);
+    const lastPage = Math.min(pdf.numPages, firstPage + maxPages - 1);
+    for (let index = firstPage; index <= lastPage; index += 1) {
       const page = await pdf.getPage(index);
       try {
         const base = page.getViewport({ scale: 1 });
         const longest = Math.max(base.width, base.height);
         if (!longest) continue;
         const viewport = page.getViewport({
-          scale: (PAGE_RENDER_EDGE * scale) / longest,
+          scale: (maxEdge * scale) / longest,
         });
         const width = Math.ceil(viewport.width);
         const height = Math.ceil(viewport.height);
@@ -317,6 +338,7 @@ export async function extractPdfImages(buffer, { maxImages = MAX_IMAGES } = {}) 
 
   const canvasFactory = canvasFactoryFor(canvasModule);
   const fontDir = standardFontDir();
+  const cmapDir = cMapDir();
   const bitmaps = [];
   const rasterPages = [];
   let pdf;
@@ -326,10 +348,15 @@ export async function extractPdfImages(buffer, { maxImages = MAX_IMAGES } = {}) 
       data: new Uint8Array(buffer),
       useWorkerFetch: false,
       isEvalSupported: false,
-      useSystemFonts: true,
+      // Same reason as the OCR preview path above: with system font
+      // substitution on, PDF.js returns before reading `standardFontDataUrl`,
+      // so standard-font text renders as blank glyphs and the reference image
+      // loses every label drawn in Helvetica/Times.
+      useSystemFonts: false,
       disableFontFace: true,
       canvasFactory,
       ...(fontDir ? { standardFontDataUrl: fontDir } : {}),
+      ...(cmapDir ? { cMapUrl: cmapDir, cMapPacked: true } : {}),
     }).promise;
 
     const total = Math.min(pdf.numPages, MAX_PAGES);

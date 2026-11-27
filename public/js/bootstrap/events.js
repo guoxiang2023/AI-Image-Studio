@@ -33,6 +33,17 @@ import {
   documentsGoBack,
   openDocuments,
 } from '../features/documents.js';
+import {
+  clearDocumentSelection,
+  closeDocumentPicker,
+  openDocumentPicker,
+  retryDocumentImages,
+  selectAllDocumentImages,
+  setDocumentPickerFormat,
+  submitDocumentPicker,
+  syncDocumentPickerButton,
+  viewGeneratedDocument,
+} from '../features/document-picker.js';
 import { handlePaste, uploadFiles } from '../features/reference.js';
 import {
   activateProvider,
@@ -57,7 +68,7 @@ import {
   setUsageTab,
 } from '../features/usage.js';
 import { closeParams, renderParams, resetParams, toggleParams } from '../features/params.js';
-import { toggleWorkspace } from '../features/workspace-panel.js';
+import { bindWorkspaceBrowserEvents, toggleWorkspace } from '../features/workspace-panel.js';
 import {
   clearActiveQr,
   clearPresetSelection,
@@ -86,6 +97,7 @@ import {
 
 export function bindEvents() {
   bindStudioEvents();
+  syncDocumentPickerButton();
 
   els.input.addEventListener('input', () => {
     autoGrow();
@@ -124,6 +136,7 @@ export function bindEvents() {
     event.stopPropagation();
     void toggleWorkspace();
   });
+  bindWorkspaceBrowserEvents();
 
   els.settingsBtn.addEventListener('click', openSettings);
   els.modelPill.addEventListener('click', toggleProviderMenu);
@@ -205,6 +218,23 @@ export function bindEvents() {
   els.documentModal.addEventListener('click', (event) => {
     if (event.target === els.documentModal) closeDocumentPreview();
   });
+  els.documentPickerBtn.addEventListener('click', () => void openDocumentPicker());
+  els.archivedDocumentBtn.addEventListener('click', () => void openDocumentPicker());
+  els.closeDocumentPicker.addEventListener('click', closeDocumentPicker);
+  els.cancelDocumentPicker.addEventListener('click', closeDocumentPicker);
+  els.documentPickerModal.addEventListener('click', (event) => {
+    if (event.target === els.documentPickerModal) closeDocumentPicker();
+  });
+  els.documentPickerFormats.addEventListener('change', (event) => {
+    if (event.target?.name === 'documentPickerFormat') {
+      setDocumentPickerFormat(event.target.value);
+    }
+  });
+  els.documentPickerAll.addEventListener('click', selectAllDocumentImages);
+  els.documentPickerClear.addEventListener('click', clearDocumentSelection);
+  els.documentPickerRetry.addEventListener('click', retryDocumentImages);
+  els.documentPickerSubmit.addEventListener('click', () => void submitDocumentPicker());
+  els.documentPickerView.addEventListener('click', () => void viewGeneratedDocument());
   els.galleryBack.addEventListener('click', backToChat);
   els.galleryStart.addEventListener('click', newChatView);
   els.gallerySearch.addEventListener('input', () => {
@@ -298,6 +328,7 @@ export function bindEvents() {
     if (event.target === els.updateModal) closeUpdateModal();
   });
 
+  els.lightboxClose.addEventListener('click', closeLightbox);
   let lightboxSwipe = null;
   let suppressLightboxClick = false;
   els.lightbox.addEventListener('pointerdown', (event) => {
@@ -367,6 +398,7 @@ export function bindEvents() {
     else if (!els.compareModal.hidden) closeCompare();
     else if (!els.updateModal.hidden) closeUpdateModal();
     else if (!els.documentModal.hidden) closeDocumentPreview();
+    else if (!els.documentPickerModal.hidden) closeDocumentPicker();
     else if (!els.paramPanel.hidden) closeParams();
     else closeSidebar();
   });

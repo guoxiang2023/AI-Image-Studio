@@ -1,6 +1,9 @@
+import { constants } from 'node:fs';
 import { lstat, open, readdir, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import {
+  DOCUMENT_MAX_BYTES,
+  DOCUMENT_MAX_CHARS,
   WORKSPACE_INDEX_TTL_MS,
   WORKSPACE_MAX_DEPTH,
   WORKSPACE_MAX_FILES,
@@ -18,6 +21,11 @@ import {
   normalizeLineRange,
   normalizeRelativePath,
 } from '../domain/workspace.js';
+import { extractDocumentText } from '../media/document-text.js';
+import { EXTRA_DOC_EXTS, extraDocumentText } from '../media/document-formats.js';
+import { cadPreview } from '../media/cad-preview.js';
+import { RASTER_ONLY_TYPES, imagePreview, rasterizedPreview } from '../media/image-preview.js';
+import { rasterizePagesForOcr } from '../media/pdf-images.js';
 import { AppError } from '../shared/errors.js';
 import { getDesktopWorkspace } from '../shared/runtime.js';
 
@@ -285,9 +293,171 @@ export async function listWorkspaceFiles(workspace, { sub = '', depth = 2, limit
   };
 }
 
+const BROWSE_PAGE_SIZE = 200;
+// The sidebar column is 248–400 CSS px wide, so a 1200px edge already covers a
+// 3x display. Rendering at the OCR edge (2048) produced 800 KB PNGs for a page
+// of body text that the panel displays at a quarter of that size.
+const PREVIEW_RENDER_EDGE = 1200;
+const browseOrder = new Intl.Collator('zh-CN', { numeric: true });
+// OOXML plus the extra containers (ODF/EPUB/RTF/EML/notebook): both end up as
+// extracted text even though two modules own the parsing. Plain-text extensions
+// are deliberately absent — they carry code-page and line-range handling that
+// keeps the numbered text view.
+const OFFICE_PREVIEW_EXTS = new Set(['docx', 'xlsx', 'pptx', ...EXTRA_DOC_EXTS]);
+const WORKSPACE_IMAGE_TYPES = new Map(Object.entries({
+  avif: 'image/avif',
+  bmp: 'image/bmp',
+  gif: 'image/gif',
+  ico: 'image/x-icon',
+  jpeg: 'image/jpeg',
+  jpg: 'image/jpeg',
+  png: 'image/png',
+  tif: 'image/tiff',
+  tiff: 'image/tiff',
+  webp: 'image/webp',
+  // Chromium cannot display SVG, but it is an image to a reader, and the route
+  // rasterizes it so the panel never receives the raw document.
+  svg: 'image/svg+xml',
+}));
+const CAD_PREVIEW_EXTS = new Set(['dwg', 'dxf']);
+
+function workspaceFileKind(name) {
+  const ext = fileExtension(name);
+  if (WORKSPACE_IMAGE_TYPES.has(ext)) return 'image';
+  if (ext === 'pdf') return 'pdf';
+  // A page has to be rendered by the browser, not dumped as numbered text, so it
+  // gets its own kind and its own route.
+  if (ext === 'html' || ext === 'htm') return 'html';
+  if (CAD_PREVIEW_EXTS.has(ext)) return 'cad';
+  if (OFFICE_PREVIEW_EXTS.has(ext)) return 'office';
+  return isTextFile(name) ? 'text' : 'file';
+}
+
+export async function resolveBrowsePath(workspace, relative, directory) {
+  const parts = relative ? relative.split('/') : [];
+  const invalid = (name) => !name || name === '.' || name === '..' || name.includes('\u0000') ||
+    (process.platform === 'win32' && /[:\\]/.test(name));
+  if (parts.some(invalid) || (!directory && !parts.length)) {
+    throw new AppError(400, '路径必须是工作目录内的相对路径');
+  }
+  const { root } = await resolveInside(workspace, '');
+  if (root !== workspace.root) throw new AppError(409, '工作目录已变更，请重新绑定');
+
+  let target = root;
+  let info;
+  for (let index = 0; index < parts.length; index += 1) {
+    const name = parts[index];
+    if (isSecretFile(name) || isIgnoredDir(name)) {
+      throw new AppError(403, '该路径不开放浏览');
+    }
+    target = path.join(target, name);
+    info = await lstat(target).catch(() => null);
+    if (!info) throw new AppError(404, '找不到该路径');
+    if (info.isSymbolicLink()) throw new AppError(403, '不跟随符号链接');
+    const needsDirectory = directory || index < parts.length - 1;
+    if (needsDirectory ? !info.isDirectory() : !info.isFile()) {
+      throw new AppError(400, needsDirectory ? '目标不是目录' : '目标不是文件');
+    }
+  }
+
+  if (parts.length && (await realpath(target).catch(() => null)) !== target) {
+    throw new AppError(409, '路径已变更，请刷新工作目录');
+  }
+  return { target, info };
+}
+
+export async function browseWorkspace(workspace, { directory = '', file = null, offset, page } = {}) {
+  if (file !== null) {
+    const { target, info } = await resolveBrowsePath(workspace, file, false);
+    const name = path.basename(target);
+    const kind = workspaceFileKind(name);
+    if (kind === 'file') throw new AppError(415, '此文件类型不支持预览');
+    if (kind === 'html') {
+      // The panel renders a page through the raw route; there is nothing useful
+      // to say here, and returning the markup as text would be a second, worse
+      // preview of the same file.
+      return { kind, render: true };
+    }
+
+    const limit = kind === 'text' ? WORKSPACE_MAX_FILE_BYTES : DOCUMENT_MAX_BYTES;
+    const buffer = await readWorkspaceBytes(target, info, limit);
+    if (kind === 'text') return formatWorkspacePreview(file, buffer.toString('utf8'), 1, 200);
+    if (kind === 'office') {
+      const ext = fileExtension(name);
+      const extra = extraDocumentText(buffer, ext);
+      if (extra) {
+        const clean = extra.text.trim();
+        if (!clean) throw new AppError(400, '文档中没有可读取的文字');
+        const clipped = clean.length > DOCUMENT_MAX_CHARS;
+        return {
+          content: clipped ? `${clean.slice(0, DOCUMENT_MAX_CHARS)}\n…（内容过长，已截断）` : clean,
+          truncated: clipped,
+        };
+      }
+      const document = extractDocumentText(buffer, ext);
+      return { content: document.text, truncated: document.truncated };
+    }
+    if (kind === 'image') {
+      const ext = fileExtension(name);
+      const mediaType = WORKSPACE_IMAGE_TYPES.get(ext);
+      // The panel is a few hundred pixels wide; a 12000px screenshot decoded at
+      // full size costs the renderer hundreds of MB for no visible gain.
+      if (RASTER_ONLY_TYPES.has(ext)) {
+        const raster = await rasterizedPreview(buffer, ext).catch((err) => {
+          if (err instanceof AppError) throw err;
+          throw new AppError(415, '图片无法显示，文件可能已损坏或使用了不支持的特性');
+        });
+        return raster;
+      }
+      const shrunk = await imagePreview(buffer);
+      return shrunk || { buffer, mediaType };
+    }
+    if (kind === 'cad') {
+      const preview = await cadPreview(buffer, { ext: fileExtension(name), name });
+      return { buffer: preview.buffer, mediaType: preview.mediaType };
+    }
+
+    const requested = Number(page);
+    const startPage = Number.isSafeInteger(requested) && requested > 0 ? requested : 1;
+    const { pages, totalPages } = await rasterizePagesForOcr(buffer, {
+      maxPages: 1,
+      startPage,
+      maxEdge: PREVIEW_RENDER_EDGE,
+    });
+    if (!pages.length) throw new AppError(422, '无法预览此 PDF 页面');
+    return { buffer: pages[0].buffer, mediaType: 'image/png', page: pages[0].page, totalPages };
+  }
+
+  const { target } = await resolveBrowsePath(workspace, directory, true);
+  const entries = await readdir(target, { withFileTypes: true }).catch(() => {
+    throw new AppError(409, '目录不可读，请刷新工作目录');
+  });
+  const visible = entries.filter((entry) =>
+    (entry.isDirectory() || entry.isFile()) && !isSecretFile(entry.name) && !isIgnoredDir(entry.name),
+  );
+  visible.sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) ||
+    browseOrder.compare(a.name, b.name) || (a.name < b.name ? -1 : Number(a.name > b.name)),
+  );
+  const requested = Number(offset);
+  const last = Math.max(0, Math.ceil(visible.length / BROWSE_PAGE_SIZE) - 1) * BROWSE_PAGE_SIZE;
+  const start = Number.isSafeInteger(requested)
+    ? Math.min(last, Math.max(0, Math.floor(requested / BROWSE_PAGE_SIZE) * BROWSE_PAGE_SIZE))
+    : 0;
+  return {
+    offset: start,
+    previous: start > 0 ? start - BROWSE_PAGE_SIZE : null,
+    next: start < last ? start + BROWSE_PAGE_SIZE : null,
+    total: visible.length,
+    entries: visible.slice(start, start + BROWSE_PAGE_SIZE).map((entry) => ({
+      name: entry.name,
+      kind: entry.isDirectory() ? 'directory' : workspaceFileKind(entry.name),
+    })),
+  };
+}
+
 /**
- * The single door through which workspace bytes are read. Both the explicit
- * read and the search walk go through it, because a cached index entry can be
+ * Explicit reads and searches validate paths again before opening them,
+ * because a cached index entry can be
  * replaced on disk between scans: a file that was regular can become a symlink
  * pointing outside the root. Everything is therefore re-verified per call:
  *   - the path is a relative path with no `..`
@@ -329,36 +499,53 @@ async function openGuardedText(workspace, relative) {
   if (!resolved || !isInside(root, resolved)) {
     throw new AppError(403, '路径超出工作目录范围');
   }
-  if (link.size > WORKSPACE_MAX_FILE_BYTES) {
-    throw new AppError(
-      413,
-      `文件超过 ${Math.round(WORKSPACE_MAX_FILE_BYTES / 1024)}KB，请改用 search_workspace`,
-    );
-  }
+  const bytes = await readWorkspaceBytes(
+    resolved,
+    link,
+    WORKSPACE_MAX_FILE_BYTES,
+    '，请改用 search_workspace 定位片段',
+  );
+  return { relative: normalized.path, text: bytes.toString('utf8') };
+}
 
-  // Read through a handle with an explicit byte cap so a file that grew after
-  // the stat above still cannot be pulled in whole.
-  const handle = await open(resolved, 'r');
-  let buffer;
+export async function readWorkspaceBytes(target, expected, limit, hint = '') {
+  const tooLarge = () => new AppError(413, `文件超过 ${Math.round(limit / 1024)} KB，无法整体读取${hint}`);
+  if (expected.size > limit) throw tooLarge();
+
+  const flags = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+  const handle = await open(target, flags).catch(() => {
+    throw new AppError(409, '文件已变更或无法读取，请刷新工作目录');
+  });
   try {
-    const chunk = Buffer.alloc(WORKSPACE_MAX_FILE_BYTES + 1);
-    const { bytesRead } = await handle.read(chunk, 0, chunk.length, 0);
-    if (bytesRead > WORKSPACE_MAX_FILE_BYTES) {
-      throw new AppError(
-        413,
-        `文件超过 ${Math.round(WORKSPACE_MAX_FILE_BYTES / 1024)}KB，请改用 search_workspace`,
-      );
+    const info = await handle.stat();
+    if (!info.isFile() || info.dev !== expected.dev || info.ino !== expected.ino) {
+      throw new AppError(409, '文件已变更，请刷新工作目录');
     }
-    buffer = chunk.subarray(0, bytesRead);
+    if (info.size > limit) throw tooLarge();
+
+    // Allocate for this file only. The extra byte detects growth during the read.
+    const buffer = Buffer.allocUnsafe(info.size + 1);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, offset, buffer.length - offset, offset);
+      if (!bytesRead) break;
+      offset += bytesRead;
+    }
+    if (offset > limit) throw tooLarge();
+    if (offset !== info.size) throw new AppError(409, '文件已变更，请刷新工作目录');
+    return buffer.subarray(0, offset);
   } finally {
     await handle.close();
   }
-  return { relative: normalized.path, text: buffer.toString('utf8') };
 }
 
 export async function readWorkspaceFile(workspace, { file, startLine, maxLines } = {}) {
   const target = await openGuardedText(workspace, file);
-  const all = target.text.split('\n');
+  return formatWorkspacePreview(target.relative, target.text, startLine, maxLines);
+}
+
+function formatWorkspacePreview(relative, text, startLine, maxLines) {
+  const all = text.split('\n');
   const { start, lines } = normalizeLineRange(startLine, maxLines, WORKSPACE_READ_LINES);
   const slice = all.slice(start - 1, start - 1 + lines);
   const numbered = slice
@@ -366,7 +553,7 @@ export async function readWorkspaceFile(workspace, { file, startLine, maxLines }
     .join('\n')
     .slice(0, WORKSPACE_READ_CHARS);
   return {
-    path: target.relative,
+    path: relative,
     totalLines: all.length,
     startLine: start,
     lines: slice.length,

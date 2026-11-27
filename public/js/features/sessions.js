@@ -23,6 +23,7 @@ import { clearAttachments } from './attachments.js';
 import { closeSidebar } from './overlays.js';
 import { shouldReplayLiveStream } from './session-replay.js';
 import { renderWorkspace } from './workspace-panel.js';
+import { dismissDocumentPicker, syncDocumentPickerButton } from './document-picker.js';
 
 export function setSessionInUrl(id) {
   if (typeof history === 'undefined' || typeof location === 'undefined') return;
@@ -339,13 +340,21 @@ export async function compactSession() {
     state.summaryUpto = result.upto || 0;
     prependSummaryNote();
     scrollBottom();
-    toast(
-      result.compacted
-        ? result.fallback
-          ? '摘要模型不可用，已用自动摘录压缩'
-          : '上下文已压缩，较早内容已存入记忆'
-        : '当前没有可压缩的上下文',
-    );
+    if (!result.compacted) {
+      toast(result.error ? `压缩失败：${result.error}` : '当前没有可压缩的上下文');
+    } else if (result.fallback) {
+      toast('摘要模型不可用，已用自动摘录压缩');
+    } else if (result.complete === false) {
+      // Progress is kept, but the backlog is not finished. Saying "已压缩"
+      // here made a half-covered session look fully summarised.
+      toast(
+        result.pending
+          ? `已压缩较早内容，还有 ${result.pending} 条消息未覆盖；再点一次可继续`
+          : '已压缩较早内容，尚未覆盖全部消息',
+      );
+    } else {
+      toast('上下文已压缩，较早内容已存入记忆');
+    }
   } catch (error) {
     toast(error.message);
   } finally {
@@ -390,6 +399,8 @@ export function newChatView() {
   renderMessages();
   markActiveSession();
   updateCompactButton();
+  dismissDocumentPicker();
+  syncDocumentPickerButton();
   closeSidebar();
   els.input.focus();
 }
@@ -398,6 +409,7 @@ export async function openSession(id) {
   const live = streamForSession(id);
   if (live && live.viewSeq === state.viewSeq) {
     showChatView();
+    dismissDocumentPicker();
     closeSidebar();
     els.input.focus();
     return true;
@@ -426,6 +438,8 @@ export async function openSession(id) {
     else syncStreamingState();
     markActiveSession();
     updateCompactButton();
+    dismissDocumentPicker();
+    syncDocumentPickerButton();
     closeSidebar();
     return true;
   } catch (error) {

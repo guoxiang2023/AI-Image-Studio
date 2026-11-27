@@ -354,3 +354,173 @@ test('an image tool works when the turn context omits turnImages', async () => {
     }
   });
 });
+
+test('the same image call repeated in one turn costs one provider request', async () => {
+  // Models re-issue an identical call after seeing the result; each one used to
+  // be a billed request and a second nearly identical picture.
+  await withImageFixture(async ({ userId }) => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      return new Response(JSON.stringify({ data: [{ b64_json: TINY_PNG }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    try {
+      const { runTool } = await import('../src/services/tools-service.js');
+      const ctx = {
+        user: { id: userId },
+        chat: { id: 'e'.repeat(16), lastImageId: null },
+        turnId: 'f'.repeat(16),
+        options: {},
+        userText: '画一只猫',
+        emit: () => {},
+        turnImages: [],
+        models: { llm: {}, image: { model: 'gpt-image-1', apiKey: 'k', baseUrl: 'http://stub' } },
+      };
+      const args = { prompt: 'a ginger cat asleep on a wooden chair', count: 1 };
+      const first = await runTool('generate_image', args, ctx);
+      // A second identical call in the SAME batch is the user asking twice and
+      // must still run.
+      const sameBatch = await runTool('generate_image', { ...args }, ctx);
+      assert.equal(calls, 2, 'identical calls in one batch both run');
+      assert.equal(sameBatch.reused, undefined);
+
+      // A repeat in a later round is the model redoing work it already did.
+      ctx.toolRound = 1;
+      const second = await runTool('generate_image', { ...args }, ctx);
+      assert.equal(calls, 2, 'the later round must not reach the provider');
+      assert.deepEqual(
+        second.images.map((image) => image.image_id),
+        first.images.map((image) => image.image_id),
+        'the repeat hands back the pictures that already exist',
+      );
+      assert.equal(second.reused, true);
+      assert.equal(ctx.turnImages.length, 2, 'no duplicate picture is added to the turn');
+
+      // A real change is a new request, not a cached result.
+      await runTool('generate_image', { ...args, count: 2 }, ctx);
+      assert.equal(calls, 3, 'a different count is a different request');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test('a timed-out generation is never re-posted when the model repeats the call', async () => {
+  // The provider may have produced (and billed) the picture before the response
+  // was lost. Every automatic resubmission makes the user's "one picture" into
+  // several, so the unknown outcome has to outlive the tool error.
+  await withImageFixture(async ({ userId }) => {
+    const originalFetch = globalThis.fetch;
+    let imagePosts = 0;
+    let chatCalls = 0;
+    const stream = (delta, finish) =>
+      new Response(
+        [
+          `data: ${JSON.stringify({ choices: [{ delta }] })}`,
+          `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: finish }] })}`,
+          'data: [DONE]',
+          '',
+        ].join('\n\n'),
+        { headers: { 'content-type': 'text/event-stream' } },
+      );
+    globalThis.fetch = async (url) => {
+      if (String(url).includes('/images/')) {
+        imagePosts += 1;
+        const err = new Error('The operation was aborted due to timeout');
+        err.name = 'TimeoutError';
+        throw err;
+      }
+      chatCalls += 1;
+      // Rounds 1 and 2 issue the identical call; round 3 answers in text.
+      if (chatCalls <= 2) {
+        return stream(
+          {
+            tool_calls: [{
+              index: 0,
+              id: `call${chatCalls}`,
+              type: 'function',
+              function: {
+                name: 'generate_image',
+                arguments: '{"prompt":"a ginger cat asleep on a wooden chair"}',
+              },
+            }],
+          },
+          'tool_calls',
+        );
+      }
+      return stream({ content: '出图超时了，请先看画册里是否已经有这张图。' }, 'stop');
+    };
+    try {
+      const { runAgent } = await import('../src/services/agent-service.js');
+      const out = await runAgent({
+        user: { id: userId },
+        chat: {
+          id: 'c'.repeat(24),
+          summary: '',
+          lastImageId: null,
+          messages: [{ role: 'user', content: '画一只趴在木椅上的橘猫' }],
+        },
+        models: {
+          llm: { apiKey: 'k', baseUrl: 'http://stub', model: 'stub-model' },
+          image: { model: 'gpt-image-1', apiKey: 'k', baseUrl: 'http://stub' },
+        },
+        options: {},
+        turnId: 't',
+        turnImages: [],
+        emit: () => {},
+      });
+      assert.equal(imagePosts, 1, 'the identical repeat must not reach the provider again');
+      assert.match(out.text, /画册/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test('the same references in the opposite order are a different request', async () => {
+  // File order is meaningful: the provider receives them in sequence and the
+  // prompt names Image 1 and Image 2, so [A,B] and [B,A] are distinct edits.
+  await withImageFixture(async ({ userId, refId }) => {
+    const originalFetch = globalThis.fetch;
+    const bodies = [];
+    globalThis.fetch = async (_url, init) => {
+      bodies.push(String(init?.body || ''));
+      return new Response(JSON.stringify({ data: [{ b64_json: TINY_PNG }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+    try {
+      const { runTool } = await import('../src/services/tools-service.js');
+      const { saveImageBuffer } = await import('../src/media/image-storage.js');
+      const other = await saveImageBuffer(userId, Buffer.from(TINY_PNG, 'base64'));
+      const ctx = {
+        user: { id: userId },
+        chat: { id: 'e'.repeat(16), lastImageId: null },
+        turnId: 'f'.repeat(16),
+        options: {},
+        userText: '把两张图合成一张',
+        emit: () => {},
+        turnImages: [],
+        models: { llm: {}, image: { model: 'gpt-image-1', apiKey: 'k', baseUrl: 'http://stub' } },
+      };
+      const args = (ids) => ({ prompt: 'blend the two references into one poster', reference_image_ids: ids });
+
+      await runTool('edit_image', args([refId, other.id]), ctx);
+      assert.equal(bodies.length, 1, 'the first order reaches the provider');
+
+      await runTool('edit_image', args([other.id, refId]), ctx);
+      assert.equal(bodies.length, 2, 'reversed references are a new edit, not a repeat');
+
+      ctx.toolRound = 1;
+      await runTool('edit_image', args([other.id, refId]), ctx);
+      assert.equal(bodies.length, 2, 'an exact repeat of that order is reused');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

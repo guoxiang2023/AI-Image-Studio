@@ -1,38 +1,37 @@
 import sharp from 'sharp';
 import {
   DOCUMENT_BRIEF_INPUT_CHARS,
-  DOCUMENT_BRIEF_MAX_CHARS,
-  DOCUMENT_BRIEF_MAX_TOKENS,
   DOCUMENT_FINAL_IMAGES,
   DOCUMENT_MAX_IMAGES,
   DOCUMENT_PLAN_CHARS,
   DOCUMENT_SECTION_CHARS,
   DOCUMENT_TIMEOUT,
+  documentTimeoutSeconds,
 } from '../config.js';
 import { chatCompletion } from '../ai/llm.js';
 import {
-  attachReferencedImages,
-  buildDocumentBriefMessages,
+  archiveDocumentImages,
   buildDocumentContextChunks,
-  buildDocumentMergeMessages,
   buildDocumentImagePlanMessages,
   buildDocumentIntroMessages,
-  buildDocumentPlanDigest,
   buildDocumentPlanMessages,
   buildDocumentSectionMessages,
+  buildFallbackDocumentImagePlan,
   buildFallbackDocumentPlan,
   buildSectionTranscript,
   buildTranscript,
+  buildDocumentUserGuidance,
+  applySettledCorrections,
   collectDocumentImages,
-  fallbackDocumentImages,
+  dedupeDocumentVoice,
   finalizeDocument,
-  findFinalDraft,
+  imageCaption,
+  parseDocumentMarkdown,
   parseDocumentImagePlan,
   parseDocumentPlan,
-  sectionImageBuckets,
   selectFinalDocumentImages,
 } from '../domain/document.js';
-import { findGalleryImage } from '../data/repositories/gallery.js';
+import { findGalleryImage, listChatGalleryImages } from '../data/repositories/gallery.js';
 import { findImageFile } from '../media/image-storage.js';
 import { buildDocx } from '../media/docx.js';
 import { buildPdf } from '../media/pdf.js';
@@ -53,18 +52,19 @@ import { friendlyError, newId, withTimeout } from '../shared/utils.js';
 import { loadChatForUser } from './chat-service.js';
 import { loadSettings } from './model-settings-service.js';
 import { recordLlmUsage } from './usage-service.js';
+import { buildDocumentBrief } from './document-brief.js';
+import { saveGeneratedDocument } from './document-library-service.js';
+import { createDocumentRequest } from './document-request.js';
+import { findDocument } from '../media/document-storage.js';
 
-// Document work is split into small requests so it does not depend on a large
-// per-request max_tokens. The compact outline and one chapter at a time both
-// fit within a conservative completion budget, even when the provider spends
-// part of that budget on hidden reasoning. Planning failures degrade to a
-// deterministic outline rather than aborting the export.
-const PLAN_MAX_TOKENS = 2048;
-const INTRO_MAX_TOKENS = 2048;
+// The outline has room for detailed Chinese JSON without tying body length to
+// one response. Each chapter gets its own completion budget.
+const PLAN_MAX_TOKENS = 4096;
+const INTRO_MAX_TOKENS = 1024;
 const SECTION_MAX_TOKENS = 4096;
 const MAX_CONTINUATIONS = 2;
 
-async function rasterizeImage(file) {
+async function rasterizeImage(file, { maxSize = 1600, quality = 88 } = {}) {
   try {
     const source = sharp(file.path, { failOn: 'none', animated: false });
     const meta = await source.metadata();
@@ -72,13 +72,13 @@ async function rasterizeImage(file) {
     const { data, info } = await source
       .rotate()
       .resize({
-        width: 1600,
-        height: 1600,
+        width: maxSize,
+        height: maxSize,
         fit: 'inside',
         withoutEnlargement: true,
       })
       .flatten({ background: '#ffffff' })
-      .jpeg({ quality: 88, chromaSubsampling: '4:4:4' })
+      .jpeg({ quality, chromaSubsampling: '4:4:4' })
       .toBuffer({ resolveWithObject: true });
     if (!data.length || !info.width || !info.height) return null;
     return { data, width: info.width, height: info.height };
@@ -98,33 +98,181 @@ function safeFilename(title, ext = 'docx') {
   return `${name || '文档'}.${ext}`;
 }
 
-async function curateFinalImages(user, chat) {
-  const all = collectDocumentImages(chat, Number.MAX_SAFE_INTEGER).images;
+/**
+ * Builds the authoritative picture inventory of one session.
+ *
+ * Same-turn images and gallery rows are merged with the conversation record:
+ * a document created in the turn that generated the pictures would otherwise
+ * miss them, because the chat row it reloads has not been saved yet. The
+ * gallery is read per session so another conversation's pictures never leak
+ * into this document.
+ *
+ * The result is the raw material both the picker and the exporter agree on:
+ * the caller decides which of these entries may be shown, cited inline, or
+ * archived.
+ */
+async function enumerateSessionImages(user, chat, { turnImages = [] } = {}) {
+  const galleryRows = listChatGalleryImages(user.id, chat.id);
+  const galleryById = new Map(galleryRows.map((row) => [row.id, row]));
+  const galleryImages = galleryRows.map((row) => ({
+    id: row.id,
+    prompt: row.prompt,
+    caption: row.caption || '',
+    size: row.size,
+    aspectRatio: row.aspect_ratio,
+    parentId: row.parent_id,
+    createdAt: row.created_at,
+  }));
+  const collected = collectDocumentImages(chat, Number.MAX_SAFE_INTEGER, {
+    turnImages,
+    galleryImages,
+  });
   const hiddenIds = [];
   const unavailableIds = [];
   const fileById = new Map();
   const enriched = [];
 
-  for (const image of all) {
-    const row = findGalleryImage(user.id, image.id);
-    if (row?.hidden) hiddenIds.push(image.id);
-    const file = await findImageFile(user.id, image.id);
-    if (file) fileById.set(image.id, file);
-    else unavailableIds.push(image.id);
+  for (const image of collected.images) {
+    // A message can carry a picture recorded under another chat (an imported
+    // session), so the per-id lookup only runs when this chat's rows do not
+    // already answer it.
+    const row = galleryById.get(image.id) || findGalleryImage(user.id, image.id);
+    const hidden = Boolean(row?.hidden);
+    if (hidden) hiddenIds.push(image.id);
+    // A hidden picture is out of the document either way, so its file is not
+    // probed: doing so would report a deleted picture the user chose to remove
+    // as a missing-but-expected one, and leak its description into the export.
+    if (!hidden) {
+      const file = await findImageFile(user.id, image.id);
+      if (file) fileById.set(image.id, file);
+      else unavailableIds.push(image.id);
+    }
     enriched.push({
       ...image,
       groupId: row?.group_id || image.groupId || null,
       favorite: Boolean(row?.favorite),
+      createdAt: Number(row?.created_at) || image.createdAt || null,
     });
   }
 
+  // The body gets the deliverable set (superseded drafts excluded) and is
+  // bounded so the planner prompt stays small; the archive keeps every visible
+  // picture, so an early version is never lost with it.
   return {
-    images: selectFinalDocumentImages(enriched, {
+    entries: enriched,
+    hiddenIds,
+    unavailableIds,
+    fileById,
+    total: collected.total,
+  };
+}
+
+const EXPORT_DRAFT_RE = /^\s*(?:请)?(?:就)?按(?:照)?(?:这|此|该|上面|上述)(?:份|版)?稿.{0,12}(?:生成|导出|输出|制作)/;
+
+function approvedDraftPlan(chat) {
+  let draft = '';
+  let approved = '';
+  for (const message of chat.messages || []) {
+    if (message.role === 'assistant') draft = String(message.content || '');
+    else if (message.role === 'user' && EXPORT_DRAFT_RE.test(message.content || '')) approved = draft;
+  }
+  const title = /^#[ \t]+(.+)$/m.exec(approved)?.[1]?.trim();
+  if (!title) return null;
+  const sections = [...approved.matchAll(/^##[ \t]+(?:§[ \t]*\d+\.?|第\s*\d+\s*章|\d+[.、)])[ \t]+([^\n]+)$/gm)]
+    .map((match) => ({ heading: match[1].trim() }));
+  if (sections.length < 2) return null;
+  return { title, sections };
+}
+
+// Match figures in the approved draft to earlier caption/ID pairs. A draft
+// can renumber its figures and omit IDs when prepared for Word.
+function approvedDraftImages(chat, entries) {
+  const catalog = new Map();
+  const approved = new Map();
+  const titleKey = (title) => title.replace(/\s+/g, '');
+  const resolve = (prefix) => {
+    const matches = entries.filter((image) => image.id.startsWith(prefix.toLowerCase()));
+    return matches.length === 1 ? matches[0].id : null;
+  };
+  let draft = '';
+  for (const message of chat.messages || []) {
+    if (message.role === 'assistant') {
+      draft = String(message.content || '');
+      for (const match of draft.matchAll(/^[ \t]*(?:>[ \t]*)?(?:\*\*)?图[ \t]*\d+[-－–]\d+[ \t]+([^\n（(]+?)[ \t]*[（(]`([a-f0-9]{8,40})`/gim)) {
+        const id = resolve(match[2]);
+        if (id) catalog.set(titleKey(match[1]), id);
+      }
+      continue;
+    }
+    if (message.role !== 'user' || !EXPORT_DRAFT_RE.test(message.content || '')) continue;
+    approved.clear();
+    for (const match of draft.matchAll(/^[ \t]*\|[ \t]*图[ \t]*\d+[-－–]\d+[ \t]*\|[ \t]*([^|\n]+)\|/gm)) {
+      const caption = match[1].trim();
+      const id = catalog.get(titleKey(caption));
+      if (id) approved.set(id, caption);
+    }
+    const opening = draft.trim().split(/\n\s*\n/, 1)[0];
+    for (const match of opening.matchAll(/(?:已确认[：:]\s*|(?:使用|采用|选用|保留))[^。；，\n]{0,65}?`([a-f0-9]{8,40})`/gi)) {
+      const id = resolve(match[1]);
+      if (id && !approved.has(id)) approved.set(id, '');
+    }
+  }
+  return approved;
+}
+
+async function curateFinalImages(user, chat, { turnImages = [], imageIds = null } = {}) {
+  const { entries, hiddenIds, unavailableIds, fileById, total } =
+    await enumerateSessionImages(user, chat, { turnImages });
+  // An explicit pick replaces the curation heuristics entirely: the user, not
+  // the planner or the edit chain, decides what this document is built from.
+  // A selected id that is not in this session's visible set is an error rather
+  // than a silent omission, because the picker and the report would otherwise
+  // disagree about what was asked for.
+  if (imageIds) {
+    const wanted = new Set(imageIds);
+    const eligible = archiveDocumentImages(entries, { hiddenIds, unavailableIds });
+    const known = new Set(eligible.map((image) => image.id));
+    const stale = imageIds.filter((id) => !known.has(id));
+    if (stale.length) {
+      throw new AppError(
+        409,
+        `以下图片已不可用，请重新选择：${stale.join('、')}`,
+      );
+    }
+    const selected = eligible
+      .filter((image) => wanted.has(image.id))
+      // Generated image captions store the user's chat message. Use the image
+      // source for the export fallback since the prompt can also repeat it.
+      .map((image) => image.source === '生成图' ? { ...image, caption: image.source } : image);
+    const selectedFiles = new Map();
+    for (const image of selected) {
+      const file = fileById.get(image.id);
+      if (file) selectedFiles.set(image.id, file);
+    }
+    return {
+      // The body planner prompt stays bounded, but nothing is lost: the
+      // appendix below carries every selected picture the body did not cite.
+      images: selected.slice(0, DOCUMENT_MAX_IMAGES),
+      archive: selected,
+      unavailable: [],
+      fileById: selectedFiles,
+      total,
+    };
+  }
+  const approved = approvedDraftImages(chat, entries);
+  for (const image of entries) {
+    image.approved = approved.has(image.id);
+    if (image.approved) image.approvedCaption = approved.get(image.id);
+  }
+  return {
+    images: selectFinalDocumentImages(entries, {
       hiddenIds,
       unavailableIds,
       limit: DOCUMENT_MAX_IMAGES,
     }),
+    archive: [],
     fileById,
+    total,
   };
 }
 
@@ -159,124 +307,6 @@ function recordUsage({ user, chat, turnId, llm, messages, response, text }) {
   });
 }
 
-function splitBriefText(text) {
-  const limit = Math.max(1000, Math.floor(DOCUMENT_BRIEF_INPUT_CHARS / 2));
-  const parts = [];
-  let rest = String(text || '');
-  while (rest.length > limit) {
-    const paragraphCut = rest.lastIndexOf('\n\n', limit);
-    const cut = paragraphCut > limit / 2 ? paragraphCut : limit;
-    parts.push(rest.slice(0, cut));
-    rest = rest.slice(cut);
-  }
-  if (rest) parts.push(rest);
-  return parts;
-}
-
-function groupBriefTexts(texts, limit) {
-  const groups = [];
-  let current = [];
-  let size = 0;
-  for (const text of texts) {
-    if (!text) continue;
-    if (text.length > limit) {
-      if (current.length) groups.push(current);
-      current = [];
-      size = 0;
-      groups.push([text]);
-      continue;
-    }
-    if (current.length && size + text.length + 2 > limit) {
-      groups.push(current);
-      current = [];
-      size = 0;
-    }
-    current.push(text);
-    size += text.length + 2;
-  }
-  if (current.length) groups.push(current);
-  return groups;
-}
-
-async function buildDocumentBrief(user, chat, llm, signal, turnId) {
-  const chunks = buildDocumentContextChunks(chat, DOCUMENT_BRIEF_INPUT_CHARS);
-  if (!chunks.length) return '';
-
-  const callSummary = async (messages) => {
-    let response;
-    try {
-      response = await chatCompletion(llm, messages, {
-        tools: false,
-        maxTokens: DOCUMENT_BRIEF_MAX_TOKENS,
-        temperature: 0.2,
-        signal,
-      });
-    } catch (err) {
-      if (signal?.aborted) throw err;
-      console.warn('文档主题摘要降级:', err.message);
-      return { text: '', finish: 'error' };
-    }
-    const text = responseText(response);
-    recordUsage({ user, chat, turnId, llm, messages, response, text });
-    return { text, finish: responseFinish(response) };
-  };
-
-  const summarizeText = async (text, depth = 0) => {
-    if (!String(text || '').trim()) return '';
-    const messages = buildDocumentBriefMessages({ chunk: text });
-    const result = await callSummary(messages);
-    if (!result.text) return text;
-    if (result.finish !== 'length') return result.text;
-    if (depth >= 4) return text;
-    const parts = splitBriefText(text);
-    if (parts.length <= 1) return result.text || text;
-    const summaries = [];
-    for (const part of parts) summaries.push(await summarizeText(part, depth + 1));
-    return summaries.filter(Boolean).join('\n\n');
-  };
-
-  const mergeTexts = async (texts, depth = 0) => {
-    const items = texts.filter(Boolean);
-    if (!items.length) return '';
-    const combined = items.join('\n\n');
-    if (combined.length <= DOCUMENT_BRIEF_MAX_CHARS) return combined;
-    if (depth >= 5) return combined;
-    if (items.length === 1) {
-      const parts = splitBriefText(items[0]);
-      if (parts.length <= 1) return items[0];
-      const merged = [];
-      for (const part of parts) merged.push(await mergeTexts([part], depth + 1));
-      return mergeTexts(merged, depth + 1);
-    }
-    const groups = groupBriefTexts(items, DOCUMENT_BRIEF_INPUT_CHARS);
-    const merged = [];
-    for (const group of groups) {
-      if (group.length === 1 && group[0].length > DOCUMENT_BRIEF_INPUT_CHARS) {
-        for (const part of splitBriefText(group[0])) {
-          merged.push(await mergeTexts([part], depth + 1));
-        }
-        continue;
-      }
-      const result = await callSummary(buildDocumentMergeMessages({ summaries: group }));
-      if (!result.text) {
-        merged.push(...group);
-        continue;
-      }
-      if (result.finish === 'length') {
-        const sub = group.length > 1 ? group : splitBriefText(group[0]);
-        for (const item of sub) merged.push(await mergeTexts([item], depth + 1));
-      } else {
-        merged.push(result.text);
-      }
-    }
-    return mergeTexts(merged, depth + 1);
-  };
-
-  const summaries = [];
-  for (const chunk of chunks) summaries.push(await summarizeText(chunk));
-  const brief = await mergeTexts(summaries);
-  return `【摘要覆盖】共处理 ${chunks.length} 个对话片段，全部纳入主题摘要。\n${brief}`.trim();
-}
 
 function unwrapMarkdown(text) {
   return String(text || '')
@@ -289,23 +319,17 @@ function normalizeIntro(text) {
 }
 
 function normalizeSection(text, heading) {
-  let value = unwrapMarkdown(text);
-  // A chapter may accidentally include the document H1; remove only that
-  // leading title and keep the requested H2.
-  value = value.replace(/^#\s+[^\n]+\n+/, '');
-  if (/^##\s+/.test(value)) return value;
-  return `## ${heading}\n\n${value}`;
+  const body = unwrapMarkdown(text).replace(/^#\s+[^\n]+(?:\n+|$)/, '')
+    .replace(/^##\s+[^\n]+(?:\n+|$)/, '').trim();
+  const blocks = parseDocumentMarkdown(body).blocks;
+  return blocks.some(({ type }) => ['paragraph', 'table', 'bullets', 'quote'].includes(type))
+    ? `## ${heading}\n\n${body}`
+    : '';
 }
 
-async function completeSection(llm, messages, signal) {
-  const responses = [];
-  let response = await chatCompletion(llm, messages, {
-    tools: false,
-    maxTokens: SECTION_MAX_TOKENS,
-    temperature: 0.4,
-    signal,
-  });
-  responses.push(response);
+async function completeSection(request, llm, messages, signal) {
+  const options = { tools: false, maxTokens: SECTION_MAX_TOKENS, temperature: 0.4, signal };
+  let response = await request('section', llm, messages, options);
   let text = responseText(response);
   let continuations = 0;
   while (
@@ -322,32 +346,31 @@ async function completeSection(llm, messages, signal) {
           '继续写完当前章节，从断点直接续写，不要重复已经写过的内容，不要添加标题页、导语或其他章节。只输出续写正文。',
       },
     ];
-    response = await chatCompletion(llm, continuation, {
-      tools: false,
-      maxTokens: SECTION_MAX_TOKENS,
-      temperature: 0.4,
-      signal,
-    });
-    responses.push(response);
+    try {
+      response = await request('section_continuation', llm, continuation, options);
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      return { text, incomplete: true };
+    }
     const part = responseText(response);
-    if (part) text = `${text}\n\n${part}`;
+    if (!part) return { text, incomplete: true };
+    text = `${text}\n\n${part}`;
     continuations += 1;
   }
-  return { text, responses, finish: responseFinish(response) };
+  const finish = responseFinish(response);
+  return { text, incomplete: Boolean(finish && finish !== 'stop') };
 }
 
-/**
- * Generates a review-ready document in small requests: a chunked semantic
- * brief, a compact outline, an introduction, then one chapter at a time.
- * Long conversations are summarized and merged rather than prefix-clipped;
- * planning/image failures degrade instead of blocking the export.
- */
 /**
  * Builds a deck page by page. The plan is a list of slides rather than
  * chapters, and every image is embedded at the size its slot allows; a
  * planning failure degrades to a deterministic deck instead of an error.
  */
-async function generateSessionDeck(user, chatId, { signal, visual = false, emit = () => {} } = {}) {
+async function generateSessionDeck(
+  user,
+  chatId,
+  { signal, visual = false, emit = () => {}, turnImages = [] } = {},
+) {
   const chat = loadChatForUser(user.id, chatId);
   if (!chat) throw new AppError(404, '会话不存在');
   if (!Array.isArray(chat.messages) || !chat.messages.length) {
@@ -368,7 +391,7 @@ async function generateSessionDeck(user, chatId, { signal, visual = false, emit 
   // superseded by a later edit, and files that no longer exist are excluded
   // before the model is asked to pick one. The list is also what the renderer
   // is allowed to embed, so a hallucinated id cannot reach the archive.
-  const { images: candidates, fileById } = await curateFinalImages(user, chat);
+  const { images: candidates, fileById } = await curateFinalImages(user, chat, { turnImages });
   const catalog = pptxImageCatalog(candidates);
   const imageIds = new Set(catalog.map((image) => image.id));
 
@@ -489,121 +512,239 @@ async function generateSessionDeck(user, chatId, { signal, visual = false, emit 
 export async function generateSessionDocument(
   user,
   chatId,
-  { signal, format = 'docx', visual = false, emit = () => {} } = {},
+  { signal, format = 'docx', visual = false, includeImages = true, emit = () => {}, turnImages = [] } = {},
 ) {
   // A deck is planned page by page, not chapter by chapter: reusing the
   // document outline would produce pages holding paragraphs.
-  if (format === 'pptx') return generateSessionDeck(user, chatId, { signal, visual, emit });
+  if (format === 'pptx') {
+    return generateSessionDeck(user, chatId, { signal, visual, emit, turnImages });
+  }
   const chat = loadChatForUser(user.id, chatId);
   if (!chat) throw new AppError(404, '会话不存在');
   if (!Array.isArray(chat.messages) || !chat.messages.length) {
     throw new AppError(400, '当前会话还没有内容');
   }
 
-  // Reuse path: when the transcript already holds a finished document, the
-  // export is pure local rendering — no model, no provider key. Placed before
-  // the API-key check on purpose: a session that already has its prose does not
-  // need a working model to produce the file, and demanding one is what forced
-  // a 68-request regeneration that ran into the timeout.
-  const draft = findFinalDraft(chat);
-  if (draft) {
-    try {
-      const { images, fileById } = await curateFinalImages(user, chat);
-      emit({ type: 'status', text: '正在排版已有终稿…' });
-      const rendered = await renderMarkdown({
-        markdown: attachReferencedImages(draft, images),
-        title: chat.title || '文档',
-        images,
-        format,
-        fileById,
-        signal,
-      });
-      return { ...rendered, reusedDraft: true };
-    } catch (err) {
-      if (signal?.aborted) throw err;
-      // Rendering an existing draft is still local work that can fail — an
-      // unreadable image file, a font the PDF renderer cannot load. The
-      // transcript is unchanged, so the model pipeline below can still produce
-      // the file; degrading beats turning an export bug into a dead end.
-      console.warn('复用终稿排版失败，回退到模型生成:', err?.message || err);
-    }
-  }
-
+  // One path only: the model pipeline. Every export is built from the whole
+  // conversation — a summary, a planned outline, then each chapter written
+  // against its own evidence. Rendering a single chat message instead would
+  // hand back whatever the model happened to type in that turn, which is not
+  // the same document and not what the reader expects.
   const models = loadSettings(user.id);
   if (!models.llm.apiKey) {
     throw new AppError(400, '请先在「模型设置」中配置对话模型 API Key');
   }
+  return generateDocumentWithModel({ user, chat, models, signal, format, emit, turnImages, includeImages });
+}
 
-  const { images: candidates, fileById } = await curateFinalImages(user, chat);
-  const timeoutSignal = withTimeout(signal, DOCUMENT_TIMEOUT);
-  const turnId = newId();
+/**
+ * Lists the pictures an explicit export may choose from.
+ *
+ * The list is the session's authoritative inventory — the same one the
+ * automatic export curates — reduced to what can actually be embedded: hidden
+ * pictures (removed from the gallery), pictures whose file is gone, and
+ * pictures of other sessions are not offered. Order is generation order, so the
+ * picker reads like the conversation.
+ */
+export async function listSessionDocumentImages(user, chat) {
+  const { entries, hiddenIds, unavailableIds, fileById } = await enumerateSessionImages(
+    user,
+    chat,
+  );
+  return archiveDocumentImages(entries, { hiddenIds, unavailableIds }).map(
+    (image) => ({
+      id: image.id,
+      url: `/files/${image.id}.${fileById.get(image.id)?.ext || 'png'}`,
+      caption: imageCaption(image),
+      source: image.source || '生成图',
+      round: Number.isInteger(image.round) && image.round > 0 ? image.round : null,
+    }),
+  );
+}
+
+/**
+ * Builds a Word/PDF document from a hand-picked set of this session's pictures.
+ *
+ * The picker uses the same outline and chapter writers as automatic export.
+ * The selection is applied to both the body and the
+ * appendix: a picked picture the writer never cites is still delivered, and a
+ * picture the user left out cannot come back through a model reply, because
+ * neither the planner nor the renderer is given any file it could use.
+ * At least one picture must be selected.
+ */
+export async function generateSelectedDocument({
+  user,
+  chat,
+  format = 'docx',
+  imageIds,
+  signal,
+}) {
+  if (!chat) throw new AppError(404, '会话不存在');
+  if (!['docx', 'pdf'].includes(format)) {
+    throw new AppError(400, '请选择 Word 或 PDF');
+  }
+  if (!Array.isArray(imageIds)) {
+    throw new AppError(400, '图片列表格式不正确');
+  }
+  const selection = [...new Set(imageIds.map((id) => String(id || '').trim()))].filter(Boolean);
+  if (!selection.length) {
+    throw new AppError(400, '请至少勾选一张图片');
+  }
+  if (!Array.isArray(chat.messages) || !chat.messages.length) {
+    throw new AppError(400, '当前会话还没有内容');
+  }
+  const models = loadSettings(user.id);
+  if (!models.llm.apiKey) {
+    throw new AppError(400, '请先在「模型设置」中配置对话模型 API Key');
+  }
+  const result = await generateDocumentWithModel({
+    user,
+    chat,
+    models,
+    signal,
+    format,
+    emit: () => {},
+    // The picker lists persisted pictures only; a picture generated in a turn
+    // that has not been written to the chat row is already in the gallery.
+    turnImages: [],
+    imageIds: selection,
+  });
+  const saved = await saveGeneratedDocument({
+    userId: user.id,
+    chatId: chat.id,
+    title: result.title,
+    filename: result.filename,
+    format: result.format,
+    buffer: result.buffer,
+    imageCount: result.images,
+    preview: result.preview,
+  });
+  return {
+    document: {
+      id: saved.id,
+      chatId: saved.chatId,
+      title: saved.title,
+      filename: saved.filename,
+      format: saved.format,
+      size: saved.size,
+      imageCount: saved.imageCount,
+      bodyImageCount: result.bodyImages,
+      appendixImageCount: result.archivedImages,
+      createdAt: saved.createdAt,
+      // A partial build is still saved and still downloadable; the reasons
+      // belong with the file so the client can say why rather than imply a
+      // clean final draft.
+      ...(result.issues?.length ? { issues: result.issues } : {}),
+    },
+  };
+}
+
+async function restoreDocumentAttachments(userId, chat) {
+  const originals = new Map();
+  for (const message of chat.messages) {
+    for (const attachment of message.attachments || []) {
+      if (!attachment.truncated || !attachment.id) continue;
+      if (!originals.has(attachment.id)) {
+        const source = await findDocument(userId, attachment.id);
+        originals.set(attachment.id, source?.text);
+      }
+      const text = originals.get(attachment.id);
+      if (text) {
+        attachment.text = text;
+        attachment.truncated = false;
+      }
+    }
+  }
+}
+
+async function generateDocumentWithModel({
+  user,
+  chat,
+  models,
+  signal,
+  format,
+  emit,
+  turnImages = [],
+  imageIds = null,
+  includeImages = true,
+}) {
+  const {
+    images: candidates,
+    archive: explicitImages,
+    fileById,
+  } = includeImages
+    ? await curateFinalImages(user, chat, { turnImages, imageIds })
+    : { images: [], archive: [], fileById: new Map() };
+  const request = createDocumentRequest({ user, chat, turnId: newId() });
   const planLlm = documentLlm(models.llm, 'low');
   const llm = documentLlm(models.llm);
-  const chunks = buildDocumentContextChunks(chat, DOCUMENT_BRIEF_INPUT_CHARS);
-  let brief = '';
-  if (chunks.length > 1 || (chunks[0]?.length || 0) > DOCUMENT_PLAN_CHARS) {
+  await restoreDocumentAttachments(user.id, chat);
+  let plan = approvedDraftPlan(chat);
+  const userGuidance = buildDocumentUserGuidance(chat);
+  const issues = [];
+  let planSource;
+  if (plan) {
+    planSource = plan.sections.map(({ heading }, index) => `${index + 1}. ${heading}`).join('\n');
+  } else {
+    const chunks = buildDocumentContextChunks(chat, DOCUMENT_BRIEF_INPUT_CHARS, { includeImages: false });
+    const transcriptLength = chunks.reduce((sum, chunk, index) => sum + chunk.length + (index ? 2 : 0), 0);
+    planSource = transcriptLength <= DOCUMENT_PLAN_CHARS ? chunks.join('\n\n') : '';
+    if (transcriptLength > DOCUMENT_PLAN_CHARS) {
+      const briefSignal = withTimeout(signal, documentTimeoutSeconds({ chunks: chunks.length }));
+      try {
+        const brief = await buildDocumentBrief(chunks, request, planLlm, briefSignal);
+        planSource = brief.text;
+        issues.push(...brief.issues);
+      } catch (err) {
+        if (signal?.aborted || !briefSignal.aborted) throw err;
+        const half = Math.floor(DOCUMENT_PLAN_CHARS / 2) - 1;
+        planSource = [chunks[0].slice(0, half), chunks.at(-1).slice(-half)].join('\n\n');
+        issues.push('长会话摘要超时，大纲仅使用首尾原文和用户修订');
+      }
+    }
+  }
+
+  if (!plan) {
     try {
-      brief = await buildDocumentBrief(user, chat, planLlm, timeoutSignal, turnId);
+      const planMessages = buildDocumentPlanMessages({ chat, transcript: planSource, userGuidance });
+      const planResponse = await request('plan', planLlm, planMessages, {
+        tools: false,
+        maxTokens: PLAN_MAX_TOKENS,
+        temperature: 0.2,
+        signal: withTimeout(signal, DOCUMENT_TIMEOUT),
+      });
+      const planText = responseText(planResponse);
+      plan = responseFinish(planResponse) === 'length' ? null : parseDocumentPlan(planText);
     } catch (err) {
-      if (signal?.aborted || timeoutSignal.aborted) throw err;
-      console.warn('文档主题摘要降级:', err.message);
+      if (signal?.aborted) throw err;
+      console.warn('文档策划降级:', err.message);
     }
   }
-  const planSource = brief || buildDocumentPlanDigest(chat, DOCUMENT_PLAN_CHARS);
-  let plan;
-
-  try {
-    const planMessages = buildDocumentPlanMessages({ chat, transcript: planSource });
-    const planResponse = await chatCompletion(planLlm, planMessages, {
-      tools: false,
-      maxTokens: PLAN_MAX_TOKENS,
-      temperature: 0.2,
-      signal: timeoutSignal,
-    });
-    const planText = responseText(planResponse);
-    recordUsage({ user, chat, turnId, llm: models.llm, messages: planMessages, response: planResponse, text: planText });
-    plan =
-      responseFinish(planResponse) === 'length'
-        ? null
-        : parseDocumentPlan(planText);
-    if (!plan) {
-      plan = buildFallbackDocumentPlan(chat);
-      console.warn('文档策划降级：使用确定性大纲');
-    }
-  } catch (err) {
-    if (signal?.aborted || timeoutSignal.aborted) throw err;
+  if (!plan?.sections.length) {
     plan = buildFallbackDocumentPlan(chat);
-    console.warn('文档策划降级:', err.message);
+    issues.push('未取得完整章节大纲，已按现有素材编排');
   }
 
-  if (!plan.sections.length) {
-    plan = { ...plan, sections: buildFallbackDocumentPlan(chat).sections };
-  }
-
-  const selectedImages = [];
+  let selectedImages = [];
+  let archive = explicitImages;
   if (candidates.length) {
+    let selected = null;
     try {
       const imageMessages = buildDocumentImagePlanMessages({
         chat,
         images: candidates,
         plan,
+        userGuidance,
         limit: DOCUMENT_FINAL_IMAGES,
       });
-      const imageResponse = await chatCompletion(planLlm, imageMessages, {
+      const imageResponse = await request('image_plan', planLlm, imageMessages, {
         tools: false,
-        // Each selected image needs ~90 tokens of JSON (id, caption, role,
-        // section). A flat 2048 budget truncates a full 24-image plan, and a
-        // truncated plan silently degrades to the fallback image set.
-        maxTokens: Math.min(
-          8192,
-          Math.max(PLAN_MAX_TOKENS, 512 + DOCUMENT_FINAL_IMAGES * 120),
-        ),
+        maxTokens: Math.min(8192, Math.max(2048, 512 + DOCUMENT_FINAL_IMAGES * 120)),
         temperature: 0.2,
-        signal: timeoutSignal,
+        signal: withTimeout(signal, DOCUMENT_TIMEOUT),
       });
       const imageText = responseText(imageResponse);
-      recordUsage({ user, chat, turnId, llm: models.llm, messages: imageMessages, response: imageResponse, text: imageText });
-      const selected =
+      selected =
         responseFinish(imageResponse) === 'length'
           ? null
           : parseDocumentImagePlan(
@@ -612,69 +753,49 @@ export async function generateSessionDocument(
               plan.sections,
               DOCUMENT_FINAL_IMAGES,
             );
-      if (selected) selectedImages.push(...selected);
-      else {
-        selectedImages.push(
-          ...fallbackDocumentImages(candidates, plan.sections, DOCUMENT_FINAL_IMAGES),
-        );
-        console.warn('文档配图降级：使用按时间排序的候选图');
-      }
     } catch (err) {
-      if (signal?.aborted || timeoutSignal.aborted) throw err;
-      selectedImages.push(
-        ...fallbackDocumentImages(candidates, plan.sections, DOCUMENT_FINAL_IMAGES),
-      );
-      console.warn('文档配图降级:', err.message);
+      if (signal?.aborted) throw err;
+      console.warn('文档配图策划失败:', err.message);
+    }
+    if (selected !== null) {
+      selectedImages = selected;
+      if (imageIds === null) archive = [...selected].sort((left, right) => left.index - right.index);
+    } else if (imageIds === null) {
+      archive = buildFallbackDocumentImagePlan(candidates);
+      issues.push('未取得完整配图方案，已改用候选图片生成文末附录');
     }
   }
-  plan.images = selectedImages;
 
-  const sections = plan.sections.length
-    ? plan.sections
-    : [{ heading: '文档正文', purpose: '', points: [] }];
+  const sections = plan.sections;
   const title = plan.title || chat.title || '文档';
-  const { buckets: imageBuckets, perChapter, dropped } = sectionImageBuckets(
-    plan,
-    sections,
-  );
-  if (dropped.length) {
-    console.warn(
-      `文档配图：${dropped.length} 张图没有可引用它的章节，已跳过（每章最多 ${perChapter} 张）`,
-    );
-  }
+  const imageBuckets = sections.map(() => []);
+  for (const image of selectedImages) imageBuckets[image.section - 1]?.push(image);
   const markdownParts = [`# ${title}`];
+  let written = 0;
 
   try {
-    const introMessages = buildDocumentIntroMessages({
-      chat,
-      plan,
-      transcript: brief || buildDocumentPlanDigest(chat, 4000),
-    });
-    const introResponse = await chatCompletion(llm, introMessages, {
+    const introMessages = buildDocumentIntroMessages({ chat, plan, transcript: planSource, userGuidance });
+    const introResponse = await request('intro', llm, introMessages, {
       tools: false,
       maxTokens: INTRO_MAX_TOKENS,
       temperature: 0.3,
-      signal: timeoutSignal,
+      signal: withTimeout(signal, DOCUMENT_TIMEOUT),
     });
-    const introText = responseText(introResponse);
-    recordUsage({ user, chat, turnId, llm: models.llm, messages: introMessages, response: introResponse, text: introText });
-    if (responseFinish(introResponse) === 'length') {
-      console.warn('文档导语降级：保留已生成部分');
-    }
-    const intro = normalizeIntro(introText) || plan.coreMessage || plan.objective;
+    const intro = responseFinish(introResponse) === 'stop' ? normalizeIntro(responseText(introResponse)) : '';
     if (intro) markdownParts.push(intro);
+  } catch (err) {
+    if (signal?.aborted) throw err;
+    console.warn('文档导语生成失败:', err.message);
+  }
 
-    const sectionBudget = Math.max(
-      4000,
-      DOCUMENT_SECTION_CHARS - (brief ? brief.length : 0),
-    );
-    for (const [index, section] of sections.entries()) {
+  const sectionSignal = withTimeout(signal, documentTimeoutSeconds({ chapters: sections.length }));
+  const sectionBudget = DOCUMENT_SECTION_CHARS;
+  for (const [index, section] of sections.entries()) {
+    const label = `第 ${index + 1} 章「${section.heading}」`;
+    try {
       if (signal?.aborted) throw new Error('已取消');
       const makeSectionMessages = (limit) => {
-        const evidence = buildSectionTranscript(chat, section, limit);
-        const transcript = brief
-          ? `【全篇事实摘要】\n${brief}\n\n【本章相关片段】\n${evidence}`
-          : evidence;
+        const transcript = buildSectionTranscript(chat, section, limit);
         return buildDocumentSectionMessages({
           chat,
           plan,
@@ -683,50 +804,47 @@ export async function generateSessionDocument(
           total: sections.length,
           images: imageBuckets[index],
           transcript,
-          imageQuota: Math.max(perChapter, imageBuckets[index]?.length || 0),
+          userGuidance,
         });
       };
+      if (process.env.DOCUMENT_DEBUG) {
+        console.warn(
+          `[doc] 章节 ${index + 1}/${sections.length}: ${section.heading}`,
+        );
+      }
       let sectionMessages = makeSectionMessages(sectionBudget);
       let result;
       try {
-        result = await completeSection(llm, sectionMessages, timeoutSignal);
+        result = await completeSection(request, llm, sectionMessages, sectionSignal);
       } catch (err) {
-        if (signal?.aborted || timeoutSignal.aborted) throw err;
+        if (sectionSignal.aborted || !/context.{0,24}(length|window|limit)|too many tokens|上下文.{0,8}(超|长)/i.test(err.message)) throw err;
         // A provider with a small context window may reject the normal
         // chapter slice. Retry once with half the evidence before failing.
         const reduced = Math.max(4000, Math.floor(sectionBudget / 2));
         if (sectionBudget <= reduced) throw err;
         console.warn(`文档第 ${index + 1} 章上下文降级:`, err.message);
         sectionMessages = makeSectionMessages(reduced);
-        result = await completeSection(llm, sectionMessages, timeoutSignal);
+        result = await completeSection(request, llm, sectionMessages, sectionSignal);
       }
-      for (const response of result.responses) {
-        recordUsage({
-          user,
-          chat,
-          turnId,
-          llm: models.llm,
-          messages: sectionMessages,
-          response,
-          text: responseText(response),
-        });
-      }
-      if (!result.text) {
-        throw new AppError(502, `文档生成失败：第 ${index + 1} 章没有返回内容`);
-      }
-      if (result.finish === 'length') {
-        console.warn(`文档第 ${index + 1} 章降级：保留已生成部分`);
-      }
-      markdownParts.push(normalizeSection(result.text, section.heading));
+      const body = normalizeSection(result.text, `${index + 1}. ${section.heading}`);
+      if (!body) throw new Error(`${label}没有返回正文`);
+      if (result.incomplete) issues.push(`${label}未写完`);
+      markdownParts.push(body);
+      written++;
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      issues.push(`${label}缺失`);
+      console.warn(`文档${label}未生成:`, friendlyError(err));
     }
-  } catch (err) {
-    if (signal?.aborted || timeoutSignal.aborted) throw err;
-    console.warn('文档编排失败:', err.message);
-    if (err instanceof AppError) throw err;
-    throw new AppError(502, `文档生成失败：${friendlyError(err)}`);
+  }
+  if (!written) {
+    throw new AppError(502, '文档生成失败：所有章节均没有返回正文');
   }
 
-  const markdown = markdownParts.filter(Boolean).join('\n\n');
+  const markdown = applySettledCorrections(
+    dedupeDocumentVoice(markdownParts.filter(Boolean).join('\n\n')),
+    chat.messages.filter((message) => message.role === 'user').map((message) => message.content).join('\n'),
+  );
   if (!markdown.trim()) {
     throw new AppError(502, '文档生成失败：模型没有返回有效内容');
   }
@@ -734,21 +852,34 @@ export async function generateSessionDocument(
   return renderMarkdown({
     markdown,
     title: plan?.title || chat.title,
+    issues,
     images: selectedImages,
+    archive,
+    requestedImageCount: imageIds?.length,
     format,
     fileById,
     signal,
   });
 }
 
-/**
- * Turns finished Markdown into the downloadable file. This is the whole export
- * and nothing else: no model is called, which is why reusing an existing draft
- * costs about a second instead of the minutes a full regeneration needs.
- */
-async function renderMarkdown({ markdown, title, images, format, fileById, signal }) {
-  const document = finalizeDocument({ markdown, title, images });
-
+async function renderMarkdown({
+  markdown,
+  title,
+  issues,
+  images,
+  archive,
+  requestedImageCount,
+  format,
+  fileById,
+  signal,
+}) {
+  const document = finalizeDocument({
+    markdown,
+    title,
+    images,
+    archive,
+    showImageSource: requestedImageCount !== undefined,
+  });
   const rasterCache = new Map();
   for (const block of document.blocks) {
     if (signal?.aborted) throw new Error('已取消');
@@ -758,7 +889,13 @@ async function renderMarkdown({ markdown, title, images, format, fileById, signa
       rasterCache.set(block.id, null);
       continue;
     }
-    const raster = await rasterizeImage(file);
+    // Appendix pictures illustrate rather than carry the argument, so they are
+    // rendered smaller and lighter: a 30-picture appendix must not triple the
+    // file size of a document whose body only uses a handful.
+    const raster = await rasterizeImage(
+      file,
+      block.archive ? { maxSize: 900, quality: 78 } : {},
+    );
     rasterCache.set(
       block.id,
       raster
@@ -768,15 +905,29 @@ async function renderMarkdown({ markdown, title, images, format, fileById, signa
   }
 
   const blocks = [];
+  const missingBody = [];
+  const missingArchive = [];
   let embedded = 0;
+  let embeddedBody = 0;
+  let embeddedArchive = 0;
   for (const block of document.blocks) {
     if (block.type !== 'image') {
       blocks.push(block);
       continue;
     }
     const raster = rasterCache.get(block.id);
-    if (!raster) continue;
+    if (!raster) {
+      // A picture that cannot be rasterized is still a generated picture. It is
+      // named in the document and in the tool result rather than silently
+      // leaving a count that does not match what the user sees in the gallery.
+      const label = `${block.id}${block.caption ? `（${block.caption}）` : ''}`;
+      if (block.archive) missingArchive.push(label);
+      else missingBody.push(label);
+      continue;
+    }
     embedded += 1;
+    if (block.archive) embeddedArchive += 1;
+    else embeddedBody += 1;
     blocks.push({
       ...block,
       data: raster.data,
@@ -784,13 +935,38 @@ async function renderMarkdown({ markdown, title, images, format, fileById, signa
       height: raster.height,
     });
   }
+  // All explicitly selected pictures are required, including those in the appendix.
+  if (requestedImageCount !== undefined && embedded < requestedImageCount) {
+    const failed = [...missingBody, ...missingArchive].join('、');
+    throw new AppError(422, `勾选了 ${requestedImageCount} 张图片，仅 ${embedded} 张可嵌入${failed ? `。无法读取或转换：${failed}` : ''}。文档未保存`);
+  }
+  const notes = [];
+  for (const label of missingBody) issues.push(`图片 ${label} 无法嵌入`);
+  for (const label of missingArchive) issues.push(`图片 ${label} 无法嵌入`);
+  const rasterFailures = [...missingBody, ...missingArchive];
+  if (rasterFailures.length) {
+    notes.push({
+      type: 'paragraph',
+      text: `以下图片在导出时无法读取或转换：${rasterFailures.join('；')}。`,
+    });
+  }
+  if (notes.length) {
+    const at = blocks.findIndex((block) => block.appendix);
+    blocks.splice(at >= 0 ? at : blocks.length, 0, ...notes);
+  }
+
+  const partial = issues.length > 0;
+  if (partial) {
+    document.title = `部分稿 · ${document.title}`;
+    blocks.unshift({ type: 'paragraph', text: `交付说明：${issues.join('；')}。` });
+  }
 
   const date = new Intl.DateTimeFormat('zh-CN', {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
   }).format(new Date());
-  const meta = `终稿 · ${date}`;
+  const meta = `${partial ? '部分稿' : '终稿'} · ${date}`;
   const preview = blocks.map((block) =>
     block.type === 'image'
       ? {
@@ -815,5 +991,8 @@ async function renderMarkdown({ markdown, title, images, format, fileById, signa
     title: document.title,
     preview,
     images: embedded,
+    bodyImages: embeddedBody,
+    archivedImages: embeddedArchive,
+    issues,
   };
 }

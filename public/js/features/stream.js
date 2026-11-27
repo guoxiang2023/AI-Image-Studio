@@ -1,5 +1,6 @@
 import { state, updateSendButton } from '../core/index.js';
 import { createAssistantShell } from './messages.js';
+import { syncDocumentPickerButton } from './document-picker.js';
 
 export function activeStream() {
   for (const stream of state.streams.values()) {
@@ -20,6 +21,7 @@ export function syncStreamingState() {
   const stream = activeStream();
   state.streaming = Boolean(stream);
   updateSendButton();
+  syncDocumentPickerButton();
 }
 
 function paintStream(stream, shell) {

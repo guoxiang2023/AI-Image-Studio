@@ -3,10 +3,16 @@ export function createRouter() {
 
   function add(method, path, handler, options = {}) {
     const keys = [];
-    const source = path.replace(/:([A-Za-z0-9_]+)/g, (_, key) => {
-      keys.push(key);
-      return '([^/]+)';
-    });
+    // A trailing `*` is a catch-all for the rest of the path, including `/`.
+    // Relative references inside a served HTML file need directory-shaped URLs
+    // (`.../files/sub/page.html` + `style.css`), which `:param` cannot express.
+    const source = path
+      .replace(/\/\*$/, '/(.*)')
+      .replace(/:([A-Za-z0-9_]+)/g, (_, key) => {
+        keys.push(key);
+        return '([^/]+)';
+      });
+    if (path.endsWith('/*')) keys.push('rest');
     routes.push({
       method,
       regex: new RegExp(`^${source}$`),

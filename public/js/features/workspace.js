@@ -16,6 +16,7 @@ import { clearAttachments } from './attachments.js';
 import { checkForUpdates } from './updates.js';
 import { resetStudio } from './studio.js';
 import { clearWorkspaceView, loadWorkspaceStatus } from './workspace-panel.js';
+import { dismissDocumentPicker } from './document-picker.js';
 
 export async function enterApp(user) {
   state.user = user;
@@ -111,5 +112,6 @@ export function resetWorkspace() {
   els.messages.innerHTML = '';
   if (els.documentsView) els.documentsView.hidden = true;
   if (els.documentModal) els.documentModal.hidden = true;
+  dismissDocumentPicker();
   if (els.documentsNav) els.documentsNav.classList.remove('active');
 }

@@ -1,4 +1,4 @@
-import { CONTEXT_TOKEN_BUDGET, CONTEXT_WINDOW } from '../config.js';
+import { CONTEXT_TOKEN_BUDGET, CONTEXT_WINDOW, SUMMARY_MAX_CHARS } from '../config.js';
 import { newId, now } from '../shared/utils.js';
 
 function clipText(value, length) {
@@ -29,6 +29,45 @@ export function estimateTokens(value) {
   return Math.ceil(tokens);
 }
 
+// Two markers that mean the persisted memory card has lost facts:
+//
+//   * fallback — the model was unavailable, so a deterministic excerpt took its
+//     place. Readable, but not a memory card.
+//   * omitted  — the model returned more than the character budget and the
+//     middle was cut to keep both the goals and the latest request.
+//
+// They are the only way to tell a lossy card from a good one after a restart,
+// and they are what makes an explicit compaction able to repair itself: only a
+// user-initiated run may re-read messages the card already claims to cover.
+export const SUMMARY_OMITTED_MARK = '【中段已省略】';
+export const SUMMARY_FALLBACK_MARK = '【自动摘录】';
+
+/** True when the persisted card is known to have dropped facts. */
+export function isLossySummary(summary) {
+  const text = String(summary || '');
+  if (!text) return false;
+  if (text.includes(SUMMARY_FALLBACK_MARK) || text.includes(SUMMARY_OMITTED_MARK)) return true;
+  // Cards written before the markers existed were cut with a clip that always
+  // lands one character past the ceiling.
+  return text.length > SUMMARY_MAX_CHARS;
+}
+
+/**
+ * Keeps a card inside its character budget without deleting the newest facts.
+ *
+ * The asked-for structure ends with the latest user request, so clipping the
+ * tail threw away exactly that. An over-long answer now loses its middle, and
+ * the marker records the loss so an explicit compaction can rebuild it from the
+ * original messages (which are never deleted).
+ */
+export function clipSummary(value) {
+  const text = String(value || '').trim();
+  if (text.length <= SUMMARY_MAX_CHARS) return text;
+  const tailLength = Math.floor(SUMMARY_MAX_CHARS * 0.35);
+  const headLength = Math.max(0, SUMMARY_MAX_CHARS - tailLength - SUMMARY_OMITTED_MARK.length);
+  return `${text.slice(0, headLength)}${SUMMARY_OMITTED_MARK}${text.slice(-tailLength)}`;
+}
+
 function imageMemoryPart(image) {
   const parts = [`image_id=${image.id}`];
   if (image.prompt) parts.push(`prompt=${clipText(image.prompt, 180)}`);
@@ -47,7 +86,14 @@ export function buildImageMemory(chat, limit = 20) {
   const recent = all.slice(-limit);
   const lines = recent.map((image) => `- ${imageMemoryPart(image)}`);
   const last = chat.lastImageId ? `\n最近一张：image_id=${chat.lastImageId}` : '';
-  const omitted = all.length > recent.length ? `\n（更早的 ${all.length - recent.length} 张见摘要）` : '';
+  const hidden = all.length - recent.length;
+  // Only point at the summary when one exists: an empty card plus "见摘要" is
+  // an instruction to invent the missing ids.
+  const omitted = hidden
+    ? chat.summary
+      ? `\n（更早的 ${hidden} 张见摘要）`
+      : `\n（更早的 ${hidden} 张未加载，也没有摘要；不要编造它们的 image_id）`
+    : '';
   return `【会话图片索引】\n${lines.join('\n')}${omitted}${last}`;
 }
 
@@ -196,6 +242,12 @@ export function toLlmHistory(chat) {
     start = index;
   }
   const result = rows.slice(start);
-  if (start > 0) result.omitted = start;
+  if (start > 0) {
+    // This number is a gap, not a pointer to the summary. Rows already start at
+    // the summary cutoff, so every row dropped here sits AFTER the summary and
+    // exists nowhere in the request. The old code let the caller describe it as
+    // "covered by the summary", which invited the model to invent the detail.
+    result.omitted = start;
+  }
   return result;
 }

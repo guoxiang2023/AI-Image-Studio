@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { closeDb, getDb, initDb } from '../src/data/database.js';
+import { insertUsageEvent } from '../src/data/repositories/usage.js';
 
 let dataDir;
 
@@ -63,8 +64,17 @@ test('migrates pricing_json and usage source columns', async () => {
   assert.ok(usageColumns.has('provider_id'));
   assert.ok(usageColumns.has('provider_name'));
   assert.ok(usageColumns.has('provider_type'));
+  // Per-call outcome metadata is added to an existing database and legacy rows
+  // stay readable as successful calls with an unknown stage and no timing.
+  for (const name of ['stage', 'status', 'finish_reason', 'elapsed_ms', 'error']) {
+    assert.ok(usageColumns.has(name), `usage_events must gain ${name}`);
+  }
   const usage = getDb()
-    .prepare('SELECT kind, estimated, provider_id, provider_type FROM usage_events WHERE user_id = ? ORDER BY kind')
+    .prepare(
+      `SELECT kind, estimated, provider_id, provider_type, stage, status, elapsed_ms,
+              finish_reason, error
+       FROM usage_events WHERE user_id = ? ORDER BY kind`,
+    )
     .all('u1');
   assert.deepEqual(
     usage.map((row) => [row.kind, row.estimated, row.provider_id, row.provider_type]),
@@ -73,4 +83,36 @@ test('migrates pricing_json and usage source columns', async () => {
       ['image', 0, null, null],
     ],
   );
+  assert.deepEqual(
+    usage.map((row) => [row.stage, row.status, row.elapsed_ms, row.finish_reason, row.error]),
+    [
+      [null, 'ok', 0, null, null],
+      [null, 'ok', 0, null, null],
+    ],
+  );
+  // The new rows can be inserted through the repository after migration.
+  insertUsageEvent({
+    userId: 'u1',
+    kind: 'document',
+    stage: 'document.plan',
+    status: 'error',
+    finishReason: null,
+    elapsedMs: 1234,
+    error: '对话模型请求失败 (500)：upstream error',
+    promptTokens: 40,
+    completionTokens: 0,
+    totalTokens: 40,
+    createdAt: 3,
+  });
+  const inserted = getDb()
+    .prepare(
+      `SELECT stage, status, elapsed_ms, error, requests FROM usage_events
+       WHERE user_id = ? AND kind = 'document'`,
+    )
+    .get('u1');
+  assert.equal(inserted.stage, 'document.plan');
+  assert.equal(inserted.status, 'error');
+  assert.equal(inserted.elapsed_ms, 1234);
+  assert.equal(inserted.requests, 1);
+  assert.match(inserted.error, /upstream error/);
 });

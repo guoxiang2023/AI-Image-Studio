@@ -160,6 +160,10 @@ function resolveFonts() {
 
 function plainText(value) {
   return String(value || '')
+    // `↔` (U+2194) has no glyph in the CJK fonts we resolve (Hiragino, Songti,
+    // Noto SC) and renders as a tofu box, while `→` and `←` are present. Two
+    // single arrows say the same thing and stay legible in every export.
+    .replace(/\u2194/g, '←→')
     .replace(/\*\*([^*\n]+)\*\*/g, '$1')
     .replace(/\*([^*\n]+)\*/g, '$1')
     .replace(/`([^`\n]+)`/g, '$1')

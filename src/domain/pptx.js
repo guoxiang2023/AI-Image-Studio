@@ -455,19 +455,8 @@ export function toPptxSlides(plan, imagesById = new Map()) {
   });
 }
 
-/** Reads the pixel size straight out of a PNG header. */
-function pngSize(buffer) {
-  const data = Buffer.from(buffer || []);
-  if (data.length > 24 && data.toString('ascii', 1, 4) === 'PNG') {
-    return { width: data.readUInt32BE(16), height: data.readUInt32BE(20) };
-  }
-  // The provider may hand back JPEG; the deck only needs a sane box here and
-  // the packager measures the real bitmap before placing it.
-  return { width: 1536, height: 1024 };
-}
-
 /**
- * Turns a plan plus its rendered pages into full-bleed slides.
+ * Turns a plan plus its rendered pages into image-only slides.
  *
  * A page with no usable bitmap falls back to its authored layout. That fallback
  * is taken from `fallbackSlides` — the already-resolved slide list — not from
@@ -479,7 +468,6 @@ export function toRasterSlides(plan, rendered = [], fallbackSlides = null) {
   return source.map((slide, index) => {
     const page = rendered.find((item) => item.index === index);
     if (!page?.buffer) return fallbackSlides?.[index] || slide;
-    const meta = pngSize(page.buffer);
     // A rasterised page shows everything the bitmap contains, so the outline
     // still lists its bullets — the preview is what the user reads to decide
     // whether to open the file, and an empty one reads as a blank page.
@@ -489,8 +477,8 @@ export function toRasterSlides(plan, rendered = [], fallbackSlides = null) {
       bullets: Array.isArray(slide.bullets) ? slide.bullets : [],
       image: {
         data: page.buffer,
-        width: meta.width,
-        height: meta.height,
+        width: page.width,
+        height: page.height,
         caption: slide.title || '',
       },
     };
@@ -500,7 +488,7 @@ export function toRasterSlides(plan, rendered = [], fallbackSlides = null) {
 /**
  * A short, human-readable outline used by the client preview.
  *
- * A full-bleed page has no text frames in the file, but it still has an
+ * An image-only page has no text frames in the file, but it still has an
  * outline: the bullets are in the rendered bitmap. Reporting them keeps the
  * in-app preview readable instead of showing a titled blank page.
  */

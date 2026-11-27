@@ -109,6 +109,9 @@
         <circle cx="10.5" cy="10.5" r="6" />
         <path d="M15 15l5 5" />
       </symbol>
+      <symbol id="i-expand" viewBox="0 0 24 24">
+        <path d="M14 4h6v6M20 4l-6 6M10 20H4v-6M4 20l6-6" />
+      </symbol>
     </svg>
 
     <div class="boot" id="bootView">
@@ -258,6 +261,9 @@
             <div class="title" id="chatTitle">新对话</div>
           </div>
           <div class="topbar-actions">
+            <button class="icon-btn" id="workspaceBrowseBtn" type="button" aria-label="浏览工作目录" title="浏览工作目录" aria-controls="workspaceBrowser" aria-expanded="false" hidden>
+              <svg class="ico"><use href="#i-folder" /></svg>
+            </button>
             <button class="model-pill" id="modelPill" type="button" title="切换模型供应商" aria-haspopup="menu" aria-expanded="false">—</button>
             <div class="provider-menu" id="providerMenu" role="menu" hidden></div>
             <button class="icon-btn" id="usageBtn" type="button" aria-label="用量与费用" title="用量与费用">
@@ -279,6 +285,7 @@
 
         <div class="archive-banner" id="archiveBanner" hidden>
           <span>这个会话已归档，恢复后可继续对话。</span>
+          <button type="button" class="mini-btn" id="archivedDocumentBtn">文档选图</button>
           <button type="button" class="mini-btn" id="restoreArchived">恢复会话</button>
         </div>
 
@@ -344,7 +351,7 @@
             <div class="gallery-empty" id="documentsEmpty" hidden>
               <div class="gallery-empty-mark"><svg class="ico"><use href="#i-document" /></svg></div>
               <h2>还没有文档</h2>
-              <p>在对话里说“把这次内容整理成 Word 文档”，生成后会出现在这里。</p>
+              <p>在输入框上方点「文档选图」挑图片导出，或在对话里让 Luma 整理成文档，生成后会出现在这里。</p>
               <button class="primary" id="documentsStart">去对话</button>
             </div>
           </div>
@@ -372,6 +379,10 @@
                 <svg class="ico"><use href="#i-sliders" /></svg>
                 参数
                 <span class="tool-dot" id="paramDot" hidden></span>
+              </button>
+              <button type="button" class="tool-chip" id="documentPickerBtn" disabled title="选择本会话的图片，导出 Word 或 PDF 文档">
+                <svg class="ico"><use href="#i-document" /></svg>
+                文档选图
               </button>
               <button type="button" class="tool-chip" id="workspaceBtn" hidden title="绑定本地工作目录，让 Luma 按需读取项目文件">
                 <svg class="ico"><use href="#i-folder" /></svg>
@@ -439,6 +450,45 @@
           <div class="hint"><span>Enter 发送</span><span class="sep">·</span><span>Shift + Enter 换行</span><span class="sep">·</span><span>支持图片和文档</span><span class="sep">·</span><span>图片/文档各最多 4 个</span></div>
         </footer>
       </main>
+      <aside class="workspace-browser" id="workspaceBrowser" aria-labelledby="workspaceBrowserTitle" hidden>
+        <header class="workspace-browser-head">
+          <h2 id="workspaceBrowserTitle">工作目录</h2>
+          <button class="icon-btn" id="workspaceBrowserRefresh" type="button" aria-label="刷新工作目录" title="刷新">
+            <svg class="ico"><use href="#i-refresh" /></svg>
+          </button>
+          <button class="icon-btn" id="workspaceBrowserClose" type="button" aria-label="关闭工作目录" title="关闭">
+            <svg class="ico"><use href="#i-close" /></svg>
+          </button>
+        </header>
+        <div class="workspace-browser-location">
+          <button class="icon-btn" id="workspaceBrowserBack" type="button" aria-label="返回目录" title="返回目录">
+            <svg class="ico"><use href="#i-arrow-left" /></svg>
+          </button>
+          <span id="workspaceBrowserPath"></span>
+        </div>
+        <div class="workspace-browser-body" id="workspaceBrowserBody">
+          <p class="workspace-browser-status" id="workspaceBrowserStatus" role="status"></p>
+          <ul class="workspace-browser-list" id="workspaceBrowserList" aria-label="目录内容" hidden></ul>
+          <pre class="workspace-browser-text" id="workspaceBrowserText" aria-label="文本预览" tabindex="0" hidden></pre>
+          <img class="workspace-browser-image" id="workspaceBrowserImage" alt="" hidden />
+          <!-- A workspace page is untrusted markup: it is framed without
+               allow-scripts, so nothing in it can run, and the server sends it
+               with its own locked-down policy. -->
+          <iframe
+            class="workspace-browser-frame"
+            id="workspaceBrowserFrame"
+            title="网页预览"
+            sandbox="allow-same-origin"
+            referrerpolicy="no-referrer"
+            hidden
+          ></iframe>
+        </div>
+        <div class="workspace-browser-pages" id="workspaceBrowserPages" hidden>
+          <button class="mini-btn" id="workspaceBrowserPrev" type="button">上一页</button>
+          <span id="workspaceBrowserCount"></span>
+          <button class="mini-btn" id="workspaceBrowserNext" type="button">下一页</button>
+        </div>
+      </aside>
     </div>
 
     <div class="modal-backdrop" id="settingsModal" hidden>
@@ -722,6 +772,7 @@
     </div>
 
     <div class="lightbox" id="lightbox" hidden>
+      <button type="button" id="lightboxClose" class="icon-btn lightbox-close" aria-label="关闭大图" title="关闭大图">×</button>
       <button class="lightbox-nav lightbox-prev" id="lightboxPrev" type="button" aria-label="上一张">
         <svg class="ico"><use href="#i-arrow-left" /></svg>
       </button>
@@ -1084,6 +1135,64 @@
       </div>
     </div>
 
+
+    <div class="modal-backdrop" id="documentPickerModal" hidden>
+      <div class="modal document-picker-modal" role="dialog" aria-modal="true" tabindex="-1" aria-labelledby="documentPickerTitle" aria-describedby="documentPickerSub">
+        <div class="modal-head">
+          <div class="document-picker-heading">
+            <p class="modal-eyebrow">DOCUMENT IMAGES</p>
+            <h2 id="documentPickerTitle">文档选图</h2>
+            <p class="document-picker-sub" id="documentPickerSub">选择要写进文档的图片</p>
+          </div>
+          <button class="icon-btn" id="closeDocumentPicker" type="button" aria-label="关闭" title="关闭">×</button>
+        </div>
+        <div class="document-picker-toolbar" id="documentPickerToolbar">
+          <div class="document-picker-formats" id="documentPickerFormats" role="radiogroup" aria-label="文档格式">
+            <label class="document-picker-format">
+              <input type="radio" name="documentPickerFormat" value="docx" checked />
+              <span>Word</span>
+            </label>
+            <label class="document-picker-format">
+              <input type="radio" name="documentPickerFormat" value="pdf" />
+              <span>PDF</span>
+            </label>
+          </div>
+          <span class="document-picker-count" id="documentPickerCount" aria-live="polite">已选 0 张</span>
+          <div class="document-picker-bulk">
+            <button type="button" class="mini-btn" id="documentPickerAll">全选</button>
+            <button type="button" class="mini-btn" id="documentPickerClear">清空</button>
+          </div>
+        </div>
+        <div class="modal-body document-picker-body" id="documentPickerBody">
+          <p class="document-picker-loading" id="documentPickerLoading" hidden>正在读取会话图片…</p>
+          <div class="document-picker-error" id="documentPickerError" role="alert" hidden>
+            <span id="documentPickerErrorText"></span>
+            <button type="button" class="mini-btn" id="documentPickerRetry">重新加载</button>
+          </div>
+          <p class="document-picker-empty" id="documentPickerEmpty" hidden>这个会话没有可选图片。需要纯文字文档，可以在对话中提出。</p>
+          <div class="document-picker-grid" id="documentPickerGrid" role="group" aria-label="本会话图片"></div>
+          <div class="document-picker-success" id="documentPickerSuccess" role="status" hidden>
+            <div class="document-picker-success-main">
+              <span class="document-picker-success-format" id="documentPickerSuccessFormat">DOCX</span>
+              <div class="document-picker-success-text">
+                <p class="document-picker-success-title" id="documentPickerSuccessTitle"></p>
+                <p class="document-picker-success-meta" id="documentPickerSuccessMeta"></p>
+              </div>
+            </div>
+            <div class="document-picker-success-actions">
+              <button type="button" class="mini-btn" id="documentPickerView">查看文档</button>
+              <a class="mini-btn" id="documentPickerDownload" download>下载</a>
+            </div>
+          </div>
+          <p class="section-note" id="documentPickerNote">未插入正文的勾选图片会按会话顺序放在文末附录。</p>
+          <p class="document-picker-submit-error" id="documentPickerSubmitError" role="alert" hidden></p>
+        </div>
+        <div class="modal-foot">
+          <button class="ghost" id="cancelDocumentPicker" type="button">取消</button>
+          <button class="primary" id="documentPickerSubmit" type="button" disabled>请先勾选图片</button>
+        </div>
+      </div>
+    </div>
 
     <div class="modal-backdrop" id="documentModal" hidden>
       <div class="modal document-modal" role="dialog" aria-modal="true" aria-labelledby="documentModalTitle">

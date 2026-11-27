@@ -5,8 +5,9 @@ export function insertUsageEvent(event) {
     .prepare(
       `INSERT INTO usage_events
         (user_id, chat_id, turn_id, kind, model, provider_id, provider_name, provider_type,
-         prompt_tokens, cached_tokens, completion_tokens, total_tokens, requests, images, estimated, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         prompt_tokens, cached_tokens, completion_tokens, total_tokens, requests, images, estimated,
+         stage, status, finish_reason, elapsed_ms, error, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       event.userId,
@@ -24,6 +25,11 @@ export function insertUsageEvent(event) {
       event.requests || 1,
       event.images || 0,
       event.estimated ? 1 : 0,
+      event.stage || null,
+      event.status || 'ok',
+      event.finishReason || null,
+      event.elapsedMs || 0,
+      event.error || null,
       event.createdAt,
     );
 }

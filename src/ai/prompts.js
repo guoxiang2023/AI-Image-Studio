@@ -143,6 +143,11 @@ export const TOOLS = [
             description:
               '仅对 pptx 有效。true 表示逐页用图片模型绘制成品页面，画面质量高但每页需要几十秒，且页面文字变成图片不可编辑；false 表示用可编辑的文字模板。用户强调「好看」「有设计感」「给甲方看」「视觉稿」「精美」时用 true；用户提到「可编辑」「自己改」「改数字」时必须用 false。',
           },
+          include_images: {
+            type: 'boolean',
+            description:
+              '仅对 Word 和 PDF 有效。用户明确要求「纯文字」「不放图片」或「不配图」时传 false，正文和附录都不插图。默认自动选图。',
+          },
         },
       },
     },

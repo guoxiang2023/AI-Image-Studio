@@ -12,6 +12,18 @@ export function findGalleryImage(userId, id) {
     .get(id, userId);
 }
 
+// Document export needs only this session's rows: a picture generated in
+// another conversation is not evidence for this one, and the gallery of a heavy
+// user is far larger than the images of a single chat.
+export function listChatGalleryImages(userId, chatId) {
+  if (!chatId) return [];
+  return getDb()
+    .prepare(
+      'SELECT * FROM gallery_images WHERE user_id = ? AND chat_id = ? ORDER BY created_at ASC',
+    )
+    .all(userId, chatId);
+}
+
 export function insertGalleryImage({
   id,
   userId,
